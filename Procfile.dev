@@ -1,0 +1,2 @@
+backend: cd /Users/jamie/Code/dedit/backend && /Users/jamie/Code/dedit/backend/.venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000
+frontend: cd /Users/jamie/Code/dedit/frontend && PORT=5173 npm run dev
