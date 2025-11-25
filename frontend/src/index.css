@@ -742,3 +742,78 @@ body {
 .author-save-btn:hover {
     background: #0052a3;
 }
+
+/* Document Actions & Export Options */
+.document-actions {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.export-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    background: #f8f8f8;
+    border-radius: 8px;
+    border: 1px solid #eee;
+}
+
+.template-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.template-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #333;
+}
+
+.template-radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.template-radio {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: #555;
+}
+
+.template-radio input[type="radio"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.template-radio input[type="radio"]:disabled + span {
+    color: #999;
+}
+
+.template-upload {
+    margin-top: 0.5rem;
+}
+
+.template-upload-btn {
+    display: inline-block;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+    border: 1px dashed #ccc;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    color: #666;
+    transition: all 0.2s;
+}
+
+.template-upload-btn:hover {
+    border-color: #999;
+    background: #fafafa;
+}

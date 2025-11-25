@@ -6,7 +6,10 @@ Provides endpoints for:
 - Retrieving converted documents
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from enum import Enum
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -32,6 +35,8 @@ app.add_middleware(
 
 # In-memory storage for PoC
 documents: dict[str, dict] = {}
+# Storage for custom templates
+templates: dict[str, bytes] = {}
 
 
 @app.get("/")
@@ -72,6 +77,7 @@ async def upload_document(file: UploadFile):
             "intermediate": intermediate,
             "tiptap": tiptap_doc,
             "comments": comments_list,
+            "original_bytes": content,  # Store original for template use
         }
 
         return {
@@ -119,12 +125,70 @@ class CommentExport(BaseModel):
     initials: str | None = None
 
 
+class TemplateOption(str, Enum):
+    """Template options for export."""
+
+    NONE = "none"  # No template (default python-docx)
+    ORIGINAL = "original"  # Use original uploaded document as template
+    CUSTOM = "custom"  # Use a custom uploaded template
+
+
 class ExportRequest(BaseModel):
     """Request body for exporting a document."""
 
     tiptap: dict
     filename: str = "document.docx"
     comments: list[CommentExport] = []
+    template: TemplateOption = TemplateOption.NONE
+    document_id: str | None = None  # Required if template is "original"
+    template_id: str | None = None  # Required if template is "custom"
+
+
+@app.post("/templates/upload")
+async def upload_template(file: UploadFile):
+    """
+    Upload a custom template document.
+
+    Returns a template ID that can be used in export requests.
+    """
+    if not file.filename or not file.filename.endswith(".docx"):
+        raise HTTPException(
+            status_code=400, detail="Template must be a .docx document"
+        )
+
+    try:
+        import uuid
+
+        content = await file.read()
+        template_id = str(uuid.uuid4())
+        templates[template_id] = content
+
+        return {
+            "id": template_id,
+            "filename": file.filename,
+            "message": "Template uploaded successfully",
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to upload template: {str(e)}"
+        )
+
+
+@app.get("/templates")
+async def list_templates():
+    """List all uploaded templates."""
+    return [{"id": tid} for tid in templates.keys()]
+
+
+@app.delete("/templates/{template_id}")
+async def delete_template(template_id: str):
+    """Delete a custom template."""
+    if template_id not in templates:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    del templates[template_id]
+    return {"message": "Template deleted"}
 
 
 @app.post("/export")
@@ -133,13 +197,49 @@ async def export_document(request: ExportRequest):
     Export TipTap JSON back to a Word document.
 
     Takes the current editor state and converts it to a .docx file.
+
+    Template options:
+    - none: Use default python-docx template (blank)
+    - original: Use the original uploaded document as template (preserves styles)
+    - custom: Use a previously uploaded custom template
     """
     try:
         # Convert comments to dict format
         comments_list = [c.model_dump() for c in request.comments]
 
+        # Determine template bytes
+        template_bytes: Optional[bytes] = None
+
+        if request.template == TemplateOption.ORIGINAL:
+            if not request.document_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="document_id required when using original template",
+                )
+            if request.document_id not in documents:
+                raise HTTPException(
+                    status_code=404, detail="Document not found"
+                )
+            template_bytes = documents[request.document_id].get(
+                "original_bytes"
+            )
+
+        elif request.template == TemplateOption.CUSTOM:
+            if not request.template_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="template_id required when using custom template",
+                )
+            if request.template_id not in templates:
+                raise HTTPException(
+                    status_code=404, detail="Template not found"
+                )
+            template_bytes = templates[request.template_id]
+
         # Convert TipTap JSON to DOCX
-        docx_buffer = create_docx_from_tiptap(request.tiptap, comments_list)
+        docx_buffer = create_docx_from_tiptap(
+            request.tiptap, comments_list, template_bytes
+        )
 
         # Ensure filename ends with .docx
         filename = request.filename
@@ -154,6 +254,8 @@ async def export_document(request: ExportRequest):
             },
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
 

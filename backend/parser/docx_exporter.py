@@ -36,8 +36,29 @@ def _reset_revision_counter():
     _revision_id_counter = 0
 
 
+def _clear_document_content(doc: Document) -> None:
+    """
+    Clear all content from a document while preserving styles.
+
+    This removes paragraphs and tables from the document body but keeps
+    styles, headers, footers, and other document properties intact.
+    """
+    # Get the body element
+    body = doc.element.body
+
+    # Remove all paragraph and table elements from the body
+    # We iterate in reverse to avoid issues with modifying during iteration
+    for child in list(body):
+        # Keep section properties (w:sectPr) as they contain page layout
+        if child.tag.endswith("}sectPr"):
+            continue
+        body.remove(child)
+
+
 def create_docx_from_tiptap(
-    tiptap_json: dict, comments: Optional[list[dict]] = None
+    tiptap_json: dict,
+    comments: Optional[list[dict]] = None,
+    template_bytes: Optional[bytes] = None,
 ) -> BytesIO:
     """
     Convert TipTap JSON document to a Word document.
@@ -49,13 +70,23 @@ def create_docx_from_tiptap(
                 "content": [...]
             }
         comments: Optional list of comment dictionaries with id, author, text, date
+        template_bytes: Optional bytes of a .docx file to use as template.
+            If provided, the template's styles will be preserved but content
+            will be replaced with the TipTap content.
 
     Returns:
         BytesIO buffer containing the .docx file
     """
     _reset_revision_counter()
 
-    doc = Document()
+    # Create document from template or blank
+    if template_bytes:
+        template_buffer = BytesIO(template_bytes)
+        doc = Document(template_buffer)
+        # Clear existing content but keep styles
+        _clear_document_content(doc)
+    else:
+        doc = Document()
     comments_dict = {c["id"]: c for c in (comments or [])}
 
     # Track which runs correspond to which comment IDs for later linking
@@ -181,7 +212,15 @@ def process_table(
         return
 
     table = doc.add_table(rows=num_rows, cols=num_cols)
-    table.style = "Table Grid"
+    # Try to apply Table Grid style, fall back gracefully if not available
+    try:
+        table.style = "Table Grid"
+    except KeyError:
+        # Style not available in this template, use default or try alternatives
+        try:
+            table.style = "TableGrid"
+        except KeyError:
+            pass  # Use default table style
 
     for row_idx, row_node in enumerate(rows_data):
         cells = row_node.get("content", [])
