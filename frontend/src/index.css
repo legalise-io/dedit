@@ -591,3 +591,25 @@ body {
     background-color: #fff3cd;
     border-bottom: 2px solid #ffc107;
 }
+
+/* Export button */
+.export-button {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    background: #0066cc;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.export-button:hover:not(:disabled) {
+    background: #0052a3;
+}
+
+.export-button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}

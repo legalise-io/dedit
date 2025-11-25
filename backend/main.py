@@ -8,9 +8,11 @@ Provides endpoints for:
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 from parser import comments_to_dict, parse_docx, to_tiptap
+from parser.docx_exporter import create_docx_from_tiptap
 from parser.docx_parser import elements_to_dict
 
 app = FastAPI(
@@ -105,6 +107,46 @@ async def list_documents():
         {"id": doc_id, "filename": doc["filename"]}
         for doc_id, doc in documents.items()
     ]
+
+
+class ExportRequest(BaseModel):
+    """Request body for exporting a document."""
+
+    tiptap: dict
+    filename: str = "document.docx"
+
+
+@app.post("/export")
+async def export_document(request: ExportRequest):
+    """
+    Export TipTap JSON back to a Word document.
+
+    Takes the current editor state and converts it to a .docx file.
+    """
+    try:
+        # Convert TipTap JSON to DOCX
+        docx_buffer = create_docx_from_tiptap(request.tiptap)
+
+        # Ensure filename ends with .docx
+        filename = request.filename
+        if not filename.endswith(".docx"):
+            filename = filename.rsplit(".", 1)[0] + ".docx"
+
+        return StreamingResponse(
+            docx_buffer,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            },
+        )
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, detail=f"Failed to export document: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

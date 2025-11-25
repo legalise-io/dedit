@@ -29,6 +29,7 @@ function App() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [comments, setComments] = useState<CommentData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleEditorReady = useCallback((editorInstance: Editor) => {
@@ -70,6 +71,48 @@ function App() {
     setEditorJson(json);
   };
 
+  const handleExport = async () => {
+    if (!editorJson) return;
+
+    setIsExporting(true);
+    setError(null);
+
+    try {
+      const response = await fetch("http://localhost:8000/export", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tiptap: editorJson,
+          filename: document?.filename || "document.docx",
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Export failed");
+      }
+
+      // Download the file
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = window.document.createElement("a");
+      a.href = url;
+      a.download = document?.filename || "document.docx";
+      window.document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to export document",
+      );
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="app">
       <header className="app-header">
@@ -80,9 +123,25 @@ function App() {
       <section className="upload-section">
         <FileUpload onUpload={handleUpload} isLoading={isLoading} />
         {document && (
-          <p style={{ marginTop: "1rem", color: "#666" }}>
-            Loaded: {document.filename}
-          </p>
+          <div
+            style={{
+              marginTop: "1rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "1rem",
+            }}
+          >
+            <p style={{ color: "#666", margin: 0 }}>
+              Loaded: {document.filename}
+            </p>
+            <button
+              onClick={handleExport}
+              disabled={isExporting || !editorJson}
+              className="export-button"
+            >
+              {isExporting ? "Exporting..." : "Export as Word"}
+            </button>
+          </div>
         )}
       </section>
 
