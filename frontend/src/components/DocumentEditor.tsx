@@ -273,25 +273,78 @@ export function DocumentEditor({
     [editor],
   );
 
+  // Helper to select change at index by querying fresh DOM
+  const selectChangeAtIndex = useCallback(
+    (index: number) => {
+      if (!editor) return;
+      const editorDom = editor.view.dom;
+
+      // Query fresh DOM for current changes
+      const walker = document.createTreeWalker(
+        editorDom,
+        NodeFilter.SHOW_ELEMENT,
+        {
+          acceptNode: (node) => {
+            const el = node as Element;
+            if (
+              (el.tagName === "INS" && el.classList.contains("insertion")) ||
+              (el.tagName === "DEL" && el.classList.contains("deletion"))
+            ) {
+              return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_SKIP;
+          },
+        },
+      );
+
+      const elements: Element[] = [];
+      let node: Node | null;
+      while ((node = walker.nextNode())) {
+        elements.push(node as Element);
+      }
+
+      if (elements.length === 0) {
+        setCurrentChangeIndex(-1);
+        setSelectedChangeId(null);
+        return;
+      }
+
+      // Clamp index to valid range
+      const newIndex = Math.min(index, elements.length - 1);
+      const el = elements[newIndex];
+      const isInsertion = el.tagName === "INS";
+      const changeId = el.getAttribute(
+        isInsertion ? "data-insertion-id" : "data-deletion-id",
+      );
+
+      setCurrentChangeIndex(newIndex);
+      setSelectedChangeId(changeId);
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    },
+    [editor],
+  );
+
   const acceptCurrentChange = useCallback(() => {
     if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
+      const indexToSelect = currentChangeIndex;
       acceptChange(changes[currentChangeIndex]);
-      // Schedule navigation to next change after DOM updates
+      // Schedule navigation after DOM updates - use fresh DOM query
       setTimeout(() => {
-        goToNextChange();
+        selectChangeAtIndex(indexToSelect);
       }, 100);
     }
-  }, [currentChangeIndex, changes, acceptChange, goToNextChange]);
+  }, [currentChangeIndex, changes, acceptChange, selectChangeAtIndex]);
 
   const rejectCurrentChange = useCallback(() => {
     if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
+      const indexToSelect = currentChangeIndex;
       rejectChange(changes[currentChangeIndex]);
-      // Schedule navigation to next change after DOM updates
+      // Schedule navigation after DOM updates - use fresh DOM query
       setTimeout(() => {
-        goToNextChange();
+        selectChangeAtIndex(indexToSelect);
       }, 100);
     }
-  }, [currentChangeIndex, changes, rejectChange, goToNextChange]);
+  }, [currentChangeIndex, changes, rejectChange, selectChangeAtIndex]);
 
   const acceptAllChanges = useCallback(() => {
     [...changes].sort((a, b) => b.from - a.from).forEach(acceptChange);
