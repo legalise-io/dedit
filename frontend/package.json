@@ -3,7 +3,7 @@
   "version": "0.1.3",
   "description": "A flexible, unstyled React document editor with track changes and comments support",
   "author": "Jamie",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/yourusername/dedit"
