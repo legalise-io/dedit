@@ -20,6 +20,7 @@ import { TrackChangesMode } from "../extensions/TrackChangesMode";
 type ToolbarItem =
   | "bold"
   | "italic"
+  | "separator"
   | "trackChangesToggle"
   | "acceptChange"
   | "rejectChange"
@@ -304,8 +305,10 @@ export function DocumentEditor({
     return <div className="loading">Loading editor...</div>;
   }
 
-  const renderToolbarItem = (item: ToolbarItem) => {
+  const renderToolbarItem = (item: ToolbarItem, index: number) => {
     switch (item) {
+      case "separator":
+        return <div key={`sep-${index}`} className="toolbar-separator" />;
       case "bold":
         return (
           <button
@@ -550,7 +553,9 @@ export function DocumentEditor({
     <div className="document-editor">
       {highlightStyle && <style>{highlightStyle}</style>}
       {toolbar && toolbar.length > 0 && (
-        <div className="editor-toolbar">{toolbar.map(renderToolbarItem)}</div>
+        <div className="editor-toolbar">
+          {toolbar.map((item, index) => renderToolbarItem(item, index))}
+        </div>
       )}
       <div className="editor-scroll-container" ref={editorContainerRef}>
         <EditorContent editor={editor} className="tiptap" />

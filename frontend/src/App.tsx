@@ -271,11 +271,14 @@ function App() {
               toolbar={[
                 "bold",
                 "italic",
+                "separator",
                 "trackChangesToggle",
+                "separator",
                 "prevChange",
                 "nextChange",
                 "acceptChange",
                 "rejectChange",
+                "separator",
                 "acceptAll",
                 "rejectAll",
               ]}
