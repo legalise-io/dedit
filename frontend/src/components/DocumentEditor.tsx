@@ -122,11 +122,11 @@ export function DocumentEditor({
   }, [editor, trackChangesEnabled]);
 
   // Extract tracked changes from DOM elements (more reliable ordering)
-  const changes = useMemo((): (TrackedChange & { _element?: Element })[] => {
+  const changes = useMemo((): TrackedChange[] => {
     if (!editor) return [];
 
     const editorDom = editor.view.dom;
-    const foundChanges: (TrackedChange & { _element?: Element })[] = [];
+    const foundChanges: TrackedChange[] = [];
 
     // Get all ins and del elements in DOM order using TreeWalker
     const walker = document.createTreeWalker(
@@ -162,12 +162,10 @@ export function DocumentEditor({
         text: el.textContent || "",
         from: index,
         to: index + 1,
-        _element: el,
       });
       index++;
     }
 
-    console.log("Found changes:", foundChanges.length);
     return foundChanges;
   }, [editor?.state.doc]);
 
@@ -183,56 +181,63 @@ export function DocumentEditor({
     }
   }, [changes.length, currentChangeIndex]);
 
+  // Track selected change ID for CSS-based highlighting
+  const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
+
   const goToChange = useCallback(
     (index: number) => {
       if (!editor || changes.length === 0) return;
       const change = changes[index];
       if (change) {
         setCurrentChangeIndex(index);
-        editor.commands.setTextSelection(change.from);
+        setSelectedChangeId(change.id);
 
-        // Scroll the change into view within the container
-        setTimeout(() => {
-          const container = editorContainerRef.current;
-          if (!container) return;
+        const editorDom = editor.view.dom;
 
-          // Find the DOM element for this change
-          const view = editor.view;
-          const coords = view.coordsAtPos(change.from);
-          const containerRect = container.getBoundingClientRect();
+        // Find the element fresh from DOM and scroll to it
+        const walker = document.createTreeWalker(
+          editorDom,
+          NodeFilter.SHOW_ELEMENT,
+          {
+            acceptNode: (node) => {
+              const el = node as Element;
+              if (
+                (el.tagName === "INS" && el.classList.contains("insertion")) ||
+                (el.tagName === "DEL" && el.classList.contains("deletion"))
+              ) {
+                return NodeFilter.FILTER_ACCEPT;
+              }
+              return NodeFilter.FILTER_SKIP;
+            },
+          },
+        );
 
-          // Calculate scroll position to center the change in view
-          const relativeTop =
-            coords.top - containerRect.top + container.scrollTop;
-          const targetScroll = relativeTop - container.clientHeight / 2;
-
-          container.scrollTo({
-            top: Math.max(0, targetScroll),
-            behavior: "smooth",
-          });
-        }, 0);
+        let i = 0;
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+          if (i === index) {
+            const el = node as Element;
+            el.scrollIntoView({
+              behavior: "smooth",
+              block: "center",
+            });
+            break;
+          }
+          i++;
+        }
       }
     },
     [editor, changes],
   );
 
   const goToPrevChange = useCallback(() => {
-    console.log("goToPrevChange called", {
-      currentChangeIndex,
-      changesLength: changes.length,
-    });
     if (changes.length === 0) return;
     const newIndex =
       currentChangeIndex <= 0 ? changes.length - 1 : currentChangeIndex - 1;
-    console.log("Going to index:", newIndex);
     goToChange(newIndex);
   }, [currentChangeIndex, changes.length, goToChange]);
 
   const goToNextChange = useCallback(() => {
-    console.log("goToNextChange called", {
-      currentChangeIndex,
-      changesLength: changes.length,
-    });
     if (changes.length === 0) return;
     const newIndex =
       currentChangeIndex < 0
@@ -240,7 +245,6 @@ export function DocumentEditor({
         : currentChangeIndex >= changes.length - 1
           ? 0
           : currentChangeIndex + 1;
-    console.log("Going to index:", newIndex);
     goToChange(newIndex);
   }, [currentChangeIndex, changes.length, goToChange]);
 
@@ -522,40 +526,23 @@ export function DocumentEditor({
     }
   };
 
-  // Add/remove selected-change class to highlight current change
-  useEffect(() => {
-    if (!editor) return;
-
-    const editorDom = editorContainerRef.current;
-    if (!editorDom) return;
-
-    // Remove previous selected-change highlights
-    editorDom.querySelectorAll(".selected-change").forEach((el) => {
-      el.classList.remove("selected-change");
-    });
-
-    // Add highlight to current change using stored element reference
-    if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
-      const change = changes[currentChangeIndex];
-      console.log("Current change:", {
-        index: currentChangeIndex,
-        id: change.id,
-        type: change.type,
-        text: change.text,
-        hasElement: !!change._element,
-        element: change._element,
-      });
-      if (change._element && change._element instanceof Element) {
-        console.log("Adding selected-change class to:", change._element);
-        change._element.classList.add("selected-change");
-      } else {
-        console.log("No _element found on change!");
+  // Generate dynamic CSS for highlighting the selected change by its data attribute
+  const highlightStyle = selectedChangeId
+    ? `
+      ins[data-insertion-id="${selectedChangeId}"],
+      del[data-deletion-id="${selectedChangeId}"] {
+        background-color: #ffc107 !important;
+        color: #000 !important;
+        outline: 2px solid #b38600 !important;
+        outline-offset: 0px;
+        border-radius: 2px;
       }
-    }
-  }, [editor, currentChangeIndex, changes]);
+    `
+    : "";
 
   return (
     <div className="document-editor">
+      {highlightStyle && <style>{highlightStyle}</style>}
       {toolbar && toolbar.length > 0 && (
         <div className="editor-toolbar">{toolbar.map(renderToolbarItem)}</div>
       )}

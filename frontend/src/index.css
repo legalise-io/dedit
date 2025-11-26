@@ -681,10 +681,10 @@ body {
 }
 
 /* Selected change highlighting */
-.tiptap ins.selected-change,
-.tiptap del.selected-change,
-.tiptap .insertion.selected-change,
-.tiptap .deletion.selected-change {
+ins.selected-change,
+del.selected-change,
+.insertion.selected-change,
+.deletion.selected-change {
     background-color: #ffc107 !important;
     color: #000 !important;
     outline: 2px solid #b38600 !important;
