@@ -289,6 +289,7 @@ function App() {
               content={document?.tiptap || null}
               onUpdate={handleEditorUpdate}
               onEditorReady={handleEditorReady}
+              toolbar={["bold", "italic"]}
             />
           </div>
         </div>

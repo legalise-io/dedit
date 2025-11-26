@@ -18,6 +18,7 @@ import type {
   TipTapDocument,
   TrackedChange,
   ExportOptions,
+  ToolbarItem,
 } from "./types";
 
 /**
@@ -79,6 +80,7 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
       extensions,
       replaceExtensions,
       extensionConfig,
+      toolbar,
     } = props;
 
     // Determine if controlled or uncontrolled
@@ -226,8 +228,67 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
       return null;
     }
 
+    const renderToolbarItem = (item: ToolbarItem) => {
+      switch (item) {
+        case "bold":
+          return (
+            <button
+              key="bold"
+              type="button"
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              className={`toolbar-btn ${editor.isActive("bold") ? "is-active" : ""}`}
+              title="Bold (Ctrl+B)"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+                <path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path>
+              </svg>
+            </button>
+          );
+        case "italic":
+          return (
+            <button
+              key="italic"
+              type="button"
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              className={`toolbar-btn ${editor.isActive("italic") ? "is-active" : ""}`}
+              title="Italic (Ctrl+I)"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="19" y1="4" x2="10" y2="4"></line>
+                <line x1="14" y1="20" x2="5" y2="20"></line>
+                <line x1="15" y1="4" x2="9" y2="20"></line>
+              </svg>
+            </button>
+          );
+        default:
+          return null;
+      }
+    };
+
     return (
       <div className={rootClassName} style={style}>
+        {toolbar && toolbar.length > 0 && (
+          <div className="editor-toolbar">{toolbar.map(renderToolbarItem)}</div>
+        )}
         <EditorContent editor={editor} className={classNames.content} />
       </div>
     );

@@ -113,6 +113,11 @@ export interface ExtensionConfig {
 }
 
 /**
+ * Available toolbar items
+ */
+export type ToolbarItem = "bold" | "italic";
+
+/**
  * Template configuration for export
  */
 export interface TemplateConfig {
@@ -213,6 +218,8 @@ export interface DocumentEditorProps {
   replaceExtensions?: Extension[];
   /** Configure built-in extensions */
   extensionConfig?: ExtensionConfig;
+  /** Toolbar items to display (e.g., ["bold", "italic"]) */
+  toolbar?: ToolbarItem[];
 }
 
 /**

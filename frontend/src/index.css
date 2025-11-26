@@ -573,6 +573,46 @@ body {
     line-height: 1.4;
 }
 
+/* Editor Toolbar */
+.document-editor {
+    display: flex;
+    flex-direction: column;
+}
+
+.editor-toolbar {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    border-bottom: 1px solid #eee;
+    background: #fafafa;
+    border-radius: 4px 4px 0 0;
+}
+
+.toolbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    color: #555;
+    transition: all 0.15s;
+}
+
+.toolbar-btn:hover {
+    background: #e8e8e8;
+    color: #333;
+}
+
+.toolbar-btn.is-active {
+    background: #e0e0e0;
+    color: #000;
+    border-color: #ccc;
+}
+
 /* Track changes marks in editor */
 .tiptap .insertion {
     background-color: #d4edda;

@@ -39,6 +39,9 @@ export type {
   // Extension types
   ExtensionConfig,
 
+  // Toolbar types
+  ToolbarItem,
+
   // Export types
   TemplateConfig,
   ExportOptions,
