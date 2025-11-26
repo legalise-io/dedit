@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev dev-backend dev-frontend kill-ports stop clean sample help build build-frontend build-lib
+.PHONY: install install-backend install-frontend dev dev-backend dev-frontend kill-ports stop clean sample help build build-frontend build-lib version-patch version-minor version-major publish
 
 # Absolute paths
 ROOT_DIR := $(shell pwd)
@@ -21,6 +21,11 @@ help:
 	@echo "  make stop             Stop all running servers"
 	@echo "  make sample           Create a sample Word document for testing"
 	@echo "  make clean            Remove virtual environments and node_modules"
+	@echo ""
+	@echo "  make version-patch    Bump patch version (0.1.0 -> 0.1.1)"
+	@echo "  make version-minor    Bump minor version (0.1.0 -> 0.2.0)"
+	@echo "  make version-major    Bump major version (0.1.0 -> 1.0.0)"
+	@echo "  make publish          Build library and publish to npm"
 	@echo ""
 	@echo "After running 'make dev', open http://localhost:5173 in your browser"
 
@@ -99,3 +104,25 @@ clean:
 	rm -rf $(FRONTEND_DIR)/node_modules
 	rm -f $(BACKEND_DIR)/sample_contract.docx
 	@echo "Cleaned"
+
+# Version bumping
+version-patch:
+	@echo "Bumping patch version..."
+	cd $(FRONTEND_DIR) && npm version patch --no-git-tag-version
+	@echo "Version bumped to $$(cd $(FRONTEND_DIR) && node -p "require('./package.json').version")"
+
+version-minor:
+	@echo "Bumping minor version..."
+	cd $(FRONTEND_DIR) && npm version minor --no-git-tag-version
+	@echo "Version bumped to $$(cd $(FRONTEND_DIR) && node -p "require('./package.json').version")"
+
+version-major:
+	@echo "Bumping major version..."
+	cd $(FRONTEND_DIR) && npm version major --no-git-tag-version
+	@echo "Version bumped to $$(cd $(FRONTEND_DIR) && node -p "require('./package.json').version")"
+
+# Publish to npm
+publish: build-lib
+	@echo "Publishing to npm..."
+	cd $(FRONTEND_DIR) && npm publish
+	@echo "Published version $$(cd $(FRONTEND_DIR) && node -p "require('./package.json').version")"
