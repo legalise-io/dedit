@@ -45,8 +45,10 @@ export function AIChatPanel({
     goToEditAndSelect,
     acceptEdit,
     rejectEdit,
+    getNextEdit,
   } = useAIEditor();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -60,20 +62,50 @@ export function AIChatPanel({
     [goToEditAndSelect],
   );
 
+  // Scroll the chat panel to show the next edit at the top
+  const scrollChatToNextEdit = useCallback(
+    (currentEdit: AIEdit) => {
+      const nextEdit = getNextEdit(currentEdit);
+      if (nextEdit && chatMessagesRef.current) {
+        // Find the next edit's element in the chat panel
+        const nextEditElement = chatMessagesRef.current.querySelector(
+          `[data-edit-id="${nextEdit.id}"]`,
+        );
+        if (nextEditElement) {
+          // Scroll so the next edit is at the top of the chat container
+          const container = chatMessagesRef.current;
+          const elementTop =
+            nextEditElement.getBoundingClientRect().top -
+            container.getBoundingClientRect().top +
+            container.scrollTop;
+          container.scrollTo({
+            top: elementTop - 8, // Small padding from top
+            behavior: "smooth",
+          });
+        }
+      }
+    },
+    [getNextEdit],
+  );
+
   const handleAccept = useCallback(
     (e: React.MouseEvent, edit: AIEdit) => {
       e.stopPropagation();
       acceptEdit(edit);
+      // Scroll chat to show next edit at top after a brief delay
+      setTimeout(() => scrollChatToNextEdit(edit), 50);
     },
-    [acceptEdit],
+    [acceptEdit, scrollChatToNextEdit],
   );
 
   const handleReject = useCallback(
     (e: React.MouseEvent, edit: AIEdit) => {
       e.stopPropagation();
       rejectEdit(edit);
+      // Scroll chat to show next edit at top after a brief delay
+      setTimeout(() => scrollChatToNextEdit(edit), 50);
     },
-    [rejectEdit],
+    [rejectEdit, scrollChatToNextEdit],
   );
 
   const renderEditLink = (edit: AIEdit, index: number) => {
@@ -119,6 +151,7 @@ export function AIChatPanel({
     return (
       <div
         key={edit.id || index}
+        data-edit-id={edit.id}
         className={`edit-row edit-row--${edit.status}`}
       >
         <button
@@ -288,7 +321,11 @@ export function AIChatPanel({
         </div>
       )}
 
-      <div className="ai-chat-messages" style={{ maxHeight }}>
+      <div
+        ref={chatMessagesRef}
+        className="ai-chat-messages"
+        style={{ maxHeight }}
+      >
         {messages.length === 0 ? (
           <div className="ai-chat-empty">
             <svg
