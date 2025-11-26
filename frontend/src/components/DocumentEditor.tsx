@@ -275,14 +275,22 @@ export function DocumentEditor({
   const acceptCurrentChange = useCallback(() => {
     if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
       acceptChange(changes[currentChangeIndex]);
+      // Schedule navigation to next change after DOM updates
+      setTimeout(() => {
+        goToNextChange();
+      }, 100);
     }
-  }, [currentChangeIndex, changes, acceptChange]);
+  }, [currentChangeIndex, changes, acceptChange, goToNextChange]);
 
   const rejectCurrentChange = useCallback(() => {
     if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
       rejectChange(changes[currentChangeIndex]);
+      // Schedule navigation to next change after DOM updates
+      setTimeout(() => {
+        goToNextChange();
+      }, 100);
     }
-  }, [currentChangeIndex, changes, rejectChange]);
+  }, [currentChangeIndex, changes, rejectChange, goToNextChange]);
 
   const acceptAllChanges = useCallback(() => {
     [...changes].sort((a, b) => b.from - a.from).forEach(acceptChange);
