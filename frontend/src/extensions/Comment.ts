@@ -77,22 +77,10 @@ export const Comment = Mark.create<CommentOptions>({
   },
 
   renderHTML({ HTMLAttributes }) {
-    // Build tooltip text from author and comment text
-    const tooltipParts: string[] = [];
-    if (HTMLAttributes["data-comment-author"]) {
-      tooltipParts.push(HTMLAttributes["data-comment-author"]);
-    }
-    if (HTMLAttributes["data-comment-text"]) {
-      tooltipParts.push(HTMLAttributes["data-comment-text"]);
-    }
-    const tooltip =
-      tooltipParts.length > 0 ? tooltipParts.join(": ") : "Comment";
-
     return [
       "span",
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         class: "comment-highlight",
-        title: tooltip,
       }),
       0,
     ];

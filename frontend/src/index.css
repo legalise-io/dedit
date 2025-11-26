@@ -695,6 +695,58 @@ del.selected-change,
     border-bottom: 2px solid #ffc107;
 }
 
+/* Tooltip container - needs to be on a wrapper that can overflow */
+.tiptap,
+.tiptap td,
+.tiptap th,
+.tiptap p {
+    overflow: visible;
+}
+
+.editor-scroll-container {
+    overflow-x: visible;
+    overflow-y: auto;
+}
+
+.editor-content {
+    overflow: visible;
+}
+
+/* Custom fast tooltip for comments */
+.tiptap .comment-highlight[data-comment-text] {
+    position: relative;
+    cursor: help;
+}
+
+.tiptap .comment-highlight[data-comment-text]::before {
+    content: attr(data-comment-author) ": " attr(data-comment-text);
+    position: absolute;
+    left: 0;
+    bottom: 100%;
+    margin-bottom: 4px;
+    background: #333;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: normal;
+    width: max-content;
+    max-width: 300px;
+    word-wrap: break-word;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s;
+    z-index: 99999;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.tiptap .comment-highlight[data-comment-text]:hover::before {
+    opacity: 1;
+    visibility: visible;
+}
+
 /* Export button */
 .export-button {
     padding: 0.5rem 1rem;

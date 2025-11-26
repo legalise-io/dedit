@@ -73,9 +73,6 @@ export const Insertion = Mark.create<InsertionOptions>({
       "ins",
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         class: "insertion",
-        title: HTMLAttributes["data-author"]
-          ? `Inserted by ${HTMLAttributes["data-author"]}`
-          : "Insertion",
       }),
       0,
     ];

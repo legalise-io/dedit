@@ -73,9 +73,6 @@ export const Deletion = Mark.create<DeletionOptions>({
       "del",
       mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
         class: "deletion",
-        title: HTMLAttributes["data-author"]
-          ? `Deleted by ${HTMLAttributes["data-author"]}`
-          : "Deletion",
       }),
       0,
     ];
