@@ -40,7 +40,7 @@ export interface UseTrackChangesOptions {
  */
 export function useTrackChanges(
   editor: Editor | null,
-  options: UseTrackChangesOptions = {}
+  options: UseTrackChangesOptions = {},
 ) {
   const {
     enabled: initialEnabled = false,
@@ -94,7 +94,7 @@ export function useTrackChanges(
 
       onEnabledChange?.(newEnabled);
     },
-    [editor, onEnabledChange]
+    [editor, onEnabledChange],
   );
 
   const setAuthor = useCallback(
@@ -103,7 +103,7 @@ export function useTrackChanges(
       editor.commands.setTrackChangesAuthor(newAuthor);
       onAuthorChange?.(newAuthor);
     },
-    [editor, onAuthorChange]
+    [editor, onAuthorChange],
   );
 
   const toggle = useCallback(() => {
@@ -114,41 +114,45 @@ export function useTrackChanges(
   const changes = useMemo((): TrackedChange[] => {
     if (!editor) return [];
 
-    const foundChanges: TrackedChange[] = [];
+    const changeMap = new Map<string, TrackedChange>();
     const doc = editor.state.doc;
 
     doc.descendants((node, pos) => {
       if (node.isText) {
         node.marks.forEach((mark) => {
           if (mark.type.name === "insertion" || mark.type.name === "deletion") {
-            foundChanges.push({
-              id: mark.attrs.id,
-              type: mark.type.name as "insertion" | "deletion",
-              author: mark.attrs.author,
-              date: mark.attrs.date,
-              text: node.text || "",
-              from: pos,
-              to: pos + node.nodeSize,
-            });
+            const id = mark.attrs.id;
+            const existing = changeMap.get(id);
+            if (existing) {
+              // Extend the range to include this text node
+              existing.from = Math.min(existing.from, pos);
+              existing.to = Math.max(existing.to, pos + node.nodeSize);
+              existing.text += node.text || "";
+            } else {
+              changeMap.set(id, {
+                id,
+                type: mark.type.name as "insertion" | "deletion",
+                author: mark.attrs.author,
+                date: mark.attrs.date,
+                text: node.text || "",
+                from: pos,
+                to: pos + node.nodeSize,
+              });
+            }
           }
         });
       }
     });
 
-    // Deduplicate by id (same mark can span multiple text nodes)
-    const seen = new Set<string>();
-    return foundChanges.filter((change) => {
-      if (seen.has(change.id)) return false;
-      seen.add(change.id);
-      return true;
-    });
+    // Convert to array and sort by position in document
+    return Array.from(changeMap.values()).sort((a, b) => a.from - b.from);
   }, [editor?.state.doc]);
 
   const findChangeById = useCallback(
     (id: string): TrackedChange | undefined => {
       return changes.find((c) => c.id === id);
     },
-    [changes]
+    [changes],
   );
 
   const acceptChange = useCallback(
@@ -166,7 +170,7 @@ export function useTrackChanges(
 
       onAccept?.(change);
     },
-    [editor, findChangeById, onAccept]
+    [editor, findChangeById, onAccept],
   );
 
   const rejectChange = useCallback(
@@ -184,7 +188,7 @@ export function useTrackChanges(
 
       onReject?.(change);
     },
-    [editor, findChangeById, onReject]
+    [editor, findChangeById, onReject],
   );
 
   const acceptAll = useCallback(() => {

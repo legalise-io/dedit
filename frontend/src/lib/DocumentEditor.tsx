@@ -4,6 +4,8 @@ import {
   useEffect,
   useMemo,
   useCallback,
+  useRef,
+  useState,
 } from "react";
 import { EditorContent } from "@tiptap/react";
 
@@ -82,6 +84,8 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
       extensionConfig,
       toolbar,
     } = props;
+
+    const editorContainerRef = useRef<HTMLDivElement>(null);
 
     // Determine if controlled or uncontrolled
     const isControlled = controlledContent !== undefined;
@@ -229,25 +233,45 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
     }
 
     // Track current change index for next/prev navigation
-    const currentChangeIndex = useMemo(() => {
-      if (!editor || changes.length === 0) return -1;
-      const { from } = editor.state.selection;
-      // Find which change contains or is nearest to cursor
-      for (let i = 0; i < changes.length; i++) {
-        if (from >= changes[i].from && from <= changes[i].to) {
-          return i;
-        }
+    const [currentChangeIndex, setCurrentChangeIndex] = useState(-1);
+
+    // Reset index when changes array changes significantly
+    useEffect(() => {
+      if (changes.length === 0) {
+        setCurrentChangeIndex(-1);
+      } else if (currentChangeIndex >= changes.length) {
+        setCurrentChangeIndex(changes.length - 1);
       }
-      return -1;
-    }, [editor, changes, editor?.state.selection]);
+    }, [changes.length, currentChangeIndex]);
 
     const goToChange = useCallback(
       (index: number) => {
         if (!editor || changes.length === 0) return;
         const change = changes[index];
         if (change) {
+          setCurrentChangeIndex(index);
           editor.commands.setTextSelection(change.from);
-          editor.commands.scrollIntoView();
+
+          // Scroll the change into view within the container
+          setTimeout(() => {
+            const container = editorContainerRef.current;
+            if (!container) return;
+
+            // Find the DOM element for this change
+            const view = editor.view;
+            const coords = view.coordsAtPos(change.from);
+            const containerRect = container.getBoundingClientRect();
+
+            // Calculate scroll position to center the change in view
+            const relativeTop =
+              coords.top - containerRect.top + container.scrollTop;
+            const targetScroll = relativeTop - container.clientHeight / 2;
+
+            container.scrollTo({
+              top: Math.max(0, targetScroll),
+              behavior: "smooth",
+            });
+          }, 0);
         }
       },
       [editor, changes],
@@ -263,7 +287,11 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
     const goToNextChange = useCallback(() => {
       if (changes.length === 0) return;
       const newIndex =
-        currentChangeIndex >= changes.length - 1 ? 0 : currentChangeIndex + 1;
+        currentChangeIndex < 0
+          ? 0
+          : currentChangeIndex >= changes.length - 1
+            ? 0
+            : currentChangeIndex + 1;
       goToChange(newIndex);
     }, [currentChangeIndex, changes.length, goToChange]);
 
@@ -513,12 +541,43 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
       }
     };
 
+    // Add/remove selected-change class to highlight current change
+    useEffect(() => {
+      if (!editor) return;
+
+      const editorDom = editorContainerRef.current;
+      if (!editorDom) return;
+
+      // Remove previous selected-change highlights
+      editorDom.querySelectorAll(".selected-change").forEach((el) => {
+        el.classList.remove("selected-change");
+      });
+
+      // Add highlight to current change
+      if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
+        const change = changes[currentChangeIndex];
+
+        // Find the element by its data attribute
+        const selector =
+          change.type === "insertion"
+            ? `ins[data-insertion-id="${change.id}"]`
+            : `del[data-deletion-id="${change.id}"]`;
+
+        const element = editorDom.querySelector(selector);
+        if (element) {
+          element.classList.add("selected-change");
+        }
+      }
+    }, [editor, currentChangeIndex, changes]);
+
     return (
       <div className={rootClassName} style={style}>
         {toolbar && toolbar.length > 0 && (
           <div className="editor-toolbar">{toolbar.map(renderToolbarItem)}</div>
         )}
-        <EditorContent editor={editor} className={classNames.content} />
+        <div className="editor-scroll-container" ref={editorContainerRef}>
+          <EditorContent editor={editor} className={classNames.content} />
+        </div>
       </div>
     );
   },

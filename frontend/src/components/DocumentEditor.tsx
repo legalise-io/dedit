@@ -1,5 +1,5 @@
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import Document from "@tiptap/extension-document";
 import Paragraph from "@tiptap/extension-paragraph";
 import Text from "@tiptap/extension-text";
@@ -55,6 +55,7 @@ export function DocumentEditor({
   trackChangesEnabled = false,
   onTrackChangesToggle,
 }: DocumentEditorProps) {
+  const editorContainerRef = useRef<HTMLDivElement>(null);
   const editor = useEditor(
     {
       extensions: [
@@ -120,74 +121,126 @@ export function DocumentEditor({
     }
   }, [editor, trackChangesEnabled]);
 
-  // Extract tracked changes from document
-  const changes = useMemo((): TrackedChange[] => {
+  // Extract tracked changes from DOM elements (more reliable ordering)
+  const changes = useMemo((): (TrackedChange & { _element?: Element })[] => {
     if (!editor) return [];
-    const foundChanges: TrackedChange[] = [];
-    const doc = editor.state.doc;
 
-    doc.descendants((node, pos) => {
-      if (node.isText) {
-        node.marks.forEach((mark) => {
-          if (mark.type.name === "insertion" || mark.type.name === "deletion") {
-            foundChanges.push({
-              id: mark.attrs.id,
-              type: mark.type.name as "insertion" | "deletion",
-              author: mark.attrs.author,
-              date: mark.attrs.date,
-              text: node.text || "",
-              from: pos,
-              to: pos + node.nodeSize,
-            });
+    const editorDom = editor.view.dom;
+    const foundChanges: (TrackedChange & { _element?: Element })[] = [];
+
+    // Get all ins and del elements in DOM order using TreeWalker
+    const walker = document.createTreeWalker(
+      editorDom,
+      NodeFilter.SHOW_ELEMENT,
+      {
+        acceptNode: (node) => {
+          const el = node as Element;
+          if (
+            (el.tagName === "INS" && el.classList.contains("insertion")) ||
+            (el.tagName === "DEL" && el.classList.contains("deletion"))
+          ) {
+            return NodeFilter.FILTER_ACCEPT;
           }
-        });
-      }
-    });
+          return NodeFilter.FILTER_SKIP;
+        },
+      },
+    );
 
-    // Deduplicate by id
-    const seen = new Set<string>();
-    return foundChanges.filter((change) => {
-      if (seen.has(change.id)) return false;
-      seen.add(change.id);
-      return true;
-    });
+    let index = 0;
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const el = node as Element;
+      const isInsertion = el.tagName === "INS";
+      foundChanges.push({
+        id:
+          el.getAttribute(
+            isInsertion ? "data-insertion-id" : "data-deletion-id",
+          ) || `dom-${index}`,
+        type: isInsertion ? "insertion" : "deletion",
+        author: el.getAttribute("data-author") || null,
+        date: el.getAttribute("data-date") || null,
+        text: el.textContent || "",
+        from: index,
+        to: index + 1,
+        _element: el,
+      });
+      index++;
+    }
+
+    console.log("Found changes:", foundChanges.length);
+    return foundChanges;
   }, [editor?.state.doc]);
 
   // Track current change index for next/prev navigation
-  const currentChangeIndex = useMemo(() => {
-    if (!editor || changes.length === 0) return -1;
-    const { from } = editor.state.selection;
-    for (let i = 0; i < changes.length; i++) {
-      if (from >= changes[i].from && from <= changes[i].to) {
-        return i;
-      }
+  const [currentChangeIndex, setCurrentChangeIndex] = useState(-1);
+
+  // Reset index when changes array changes significantly
+  useEffect(() => {
+    if (changes.length === 0) {
+      setCurrentChangeIndex(-1);
+    } else if (currentChangeIndex >= changes.length) {
+      setCurrentChangeIndex(changes.length - 1);
     }
-    return -1;
-  }, [editor, changes, editor?.state.selection]);
+  }, [changes.length, currentChangeIndex]);
 
   const goToChange = useCallback(
     (index: number) => {
       if (!editor || changes.length === 0) return;
       const change = changes[index];
       if (change) {
+        setCurrentChangeIndex(index);
         editor.commands.setTextSelection(change.from);
-        editor.commands.scrollIntoView();
+
+        // Scroll the change into view within the container
+        setTimeout(() => {
+          const container = editorContainerRef.current;
+          if (!container) return;
+
+          // Find the DOM element for this change
+          const view = editor.view;
+          const coords = view.coordsAtPos(change.from);
+          const containerRect = container.getBoundingClientRect();
+
+          // Calculate scroll position to center the change in view
+          const relativeTop =
+            coords.top - containerRect.top + container.scrollTop;
+          const targetScroll = relativeTop - container.clientHeight / 2;
+
+          container.scrollTo({
+            top: Math.max(0, targetScroll),
+            behavior: "smooth",
+          });
+        }, 0);
       }
     },
     [editor, changes],
   );
 
   const goToPrevChange = useCallback(() => {
+    console.log("goToPrevChange called", {
+      currentChangeIndex,
+      changesLength: changes.length,
+    });
     if (changes.length === 0) return;
     const newIndex =
       currentChangeIndex <= 0 ? changes.length - 1 : currentChangeIndex - 1;
+    console.log("Going to index:", newIndex);
     goToChange(newIndex);
   }, [currentChangeIndex, changes.length, goToChange]);
 
   const goToNextChange = useCallback(() => {
+    console.log("goToNextChange called", {
+      currentChangeIndex,
+      changesLength: changes.length,
+    });
     if (changes.length === 0) return;
     const newIndex =
-      currentChangeIndex >= changes.length - 1 ? 0 : currentChangeIndex + 1;
+      currentChangeIndex < 0
+        ? 0
+        : currentChangeIndex >= changes.length - 1
+          ? 0
+          : currentChangeIndex + 1;
+    console.log("Going to index:", newIndex);
     goToChange(newIndex);
   }, [currentChangeIndex, changes.length, goToChange]);
 
@@ -469,12 +522,46 @@ export function DocumentEditor({
     }
   };
 
+  // Add/remove selected-change class to highlight current change
+  useEffect(() => {
+    if (!editor) return;
+
+    const editorDom = editorContainerRef.current;
+    if (!editorDom) return;
+
+    // Remove previous selected-change highlights
+    editorDom.querySelectorAll(".selected-change").forEach((el) => {
+      el.classList.remove("selected-change");
+    });
+
+    // Add highlight to current change using stored element reference
+    if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
+      const change = changes[currentChangeIndex];
+      console.log("Current change:", {
+        index: currentChangeIndex,
+        id: change.id,
+        type: change.type,
+        text: change.text,
+        hasElement: !!change._element,
+        element: change._element,
+      });
+      if (change._element && change._element instanceof Element) {
+        console.log("Adding selected-change class to:", change._element);
+        change._element.classList.add("selected-change");
+      } else {
+        console.log("No _element found on change!");
+      }
+    }
+  }, [editor, currentChangeIndex, changes]);
+
   return (
     <div className="document-editor">
       {toolbar && toolbar.length > 0 && (
         <div className="editor-toolbar">{toolbar.map(renderToolbarItem)}</div>
       )}
-      <EditorContent editor={editor} className="tiptap" />
+      <div className="editor-scroll-container" ref={editorContainerRef}>
+        <EditorContent editor={editor} className="tiptap" />
+      </div>
     </div>
   );
 }

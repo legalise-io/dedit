@@ -8,10 +8,16 @@ Word stores track changes as:
 These wrap the affected content (runs, text, etc.)
 """
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
 from docx.oxml.ns import qn
+
+
+def generate_unique_id(prefix: str) -> str:
+    """Generate a globally unique ID for a revision."""
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass
@@ -120,11 +126,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
         para_element, para_index
     )
 
-    revision_id_counter = 0
-
     def process_element(element, current_revision=None):
-        nonlocal revision_id_counter
-
         tag = element.tag
 
         # Check if this element starts a revision
@@ -133,11 +135,10 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
             date = element.get(qn("w:date"))
             current_revision = {
                 "type": "insertion",
-                "id": f"ins-{para_index}-{revision_id_counter}",
+                "id": generate_unique_id("ins"),
                 "author": author,
                 "date": date,
             }
-            revision_id_counter += 1
             for child in element:
                 process_element(child, current_revision)
             return
@@ -147,11 +148,10 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
             date = element.get(qn("w:date"))
             current_revision = {
                 "type": "deletion",
-                "id": f"del-{para_index}-{revision_id_counter}",
+                "id": generate_unique_id("del"),
                 "author": author,
                 "date": date,
             }
-            revision_id_counter += 1
             for child in element:
                 process_element(child, current_revision)
             return

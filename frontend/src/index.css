@@ -593,6 +593,16 @@ body {
 .document-editor {
     display: flex;
     flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.editor-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    max-height: 70vh;
+    padding: 1rem;
 }
 
 .editor-toolbar {
@@ -668,6 +678,18 @@ body {
     text-decoration: line-through;
     text-decoration-color: #dc3545;
     color: #999;
+}
+
+/* Selected change highlighting */
+.tiptap ins.selected-change,
+.tiptap del.selected-change,
+.tiptap .insertion.selected-change,
+.tiptap .deletion.selected-change {
+    background-color: #ffc107 !important;
+    color: #000 !important;
+    outline: 2px solid #b38600 !important;
+    outline-offset: 0px;
+    border-radius: 2px;
 }
 
 .tiptap .comment-highlight {
