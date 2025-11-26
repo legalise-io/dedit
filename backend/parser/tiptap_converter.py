@@ -12,6 +12,9 @@ from typing import Optional
 
 from .docx_parser import Paragraph, Section, Table, TextRun, elements_to_dict
 
+# Module-level comments dict for lookup during conversion
+_comments_lookup: dict = {}
+
 
 def text_run_to_tiptap(run: TextRun) -> dict:
     """Convert a TextRun to a Tiptap text node with marks."""
@@ -52,9 +55,17 @@ def text_run_to_tiptap(run: TextRun) -> dict:
     # Add comment marks
     if run.comment_ids:
         for comment_id in run.comment_ids:
-            marks.append(
-                {"type": "comment", "attrs": {"commentId": comment_id}}
-            )
+            comment_attrs = {"commentId": comment_id}
+            # Look up comment details if available
+            if comment_id in _comments_lookup:
+                comment = _comments_lookup[comment_id]
+                if hasattr(comment, "author"):
+                    comment_attrs["author"] = comment.author
+                if hasattr(comment, "date"):
+                    comment_attrs["date"] = comment.date
+                if hasattr(comment, "text"):
+                    comment_attrs["text"] = comment.text
+            marks.append({"type": "comment", "attrs": comment_attrs})
 
     if marks:
         node["marks"] = marks
@@ -171,10 +182,20 @@ def convert_dict_element(elem: dict) -> dict:
                 # Handle comment marks
                 if run.get("commentIds"):
                     for comment_id in run["commentIds"]:
+                        comment_attrs = {"commentId": comment_id}
+                        # Look up comment details if available
+                        if comment_id in _comments_lookup:
+                            comment = _comments_lookup[comment_id]
+                            if hasattr(comment, "author"):
+                                comment_attrs["author"] = comment.author
+                            if hasattr(comment, "date"):
+                                comment_attrs["date"] = comment.date
+                            if hasattr(comment, "text"):
+                                comment_attrs["text"] = comment.text
                         marks.append(
                             {
                                 "type": "comment",
-                                "attrs": {"commentId": comment_id},
+                                "attrs": comment_attrs,
                             }
                         )
 
@@ -257,16 +278,20 @@ def convert_dict_element(elem: dict) -> dict:
     return {"type": "paragraph"}
 
 
-def to_tiptap(elements: list) -> dict:
+def to_tiptap(elements: list, comments: dict = None) -> dict:
     """
     Convert a list of parsed document elements to a Tiptap document.
 
     Args:
         elements: List of Paragraph, Table, Section objects or dicts
+        comments: Optional dict mapping comment ID to Comment objects
 
     Returns:
         Tiptap document JSON structure
     """
+    global _comments_lookup
+    _comments_lookup = comments or {}
+
     content = []
 
     for elem in elements:

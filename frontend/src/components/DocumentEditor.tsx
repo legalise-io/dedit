@@ -531,10 +531,8 @@ export function DocumentEditor({
     ? `
       ins[data-insertion-id="${selectedChangeId}"],
       del[data-deletion-id="${selectedChangeId}"] {
-        background-color: #ffc107 !important;
-        color: #000 !important;
-        outline: 2px solid #b38600 !important;
-        outline-offset: 0px;
+        outline: 2px solid #0066cc !important;
+        outline-offset: 1px;
         border-radius: 2px;
       }
     `

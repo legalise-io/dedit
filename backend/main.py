@@ -65,7 +65,7 @@ async def upload_document(file: UploadFile):
 
         # Convert to both formats
         intermediate = elements_to_dict(elements)
-        tiptap_doc = to_tiptap(elements)
+        tiptap_doc = to_tiptap(elements, comments)
         comments_list = comments_to_dict(comments)
 
         # Generate document ID and store
