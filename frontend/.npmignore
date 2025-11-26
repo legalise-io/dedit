@@ -1,0 +1,38 @@
+# Source files
+src/
+*.ts
+*.tsx
+!dist/**/*.d.ts
+
+# Config files
+tsconfig.json
+tsconfig.lib.json
+vite.config.ts
+vite.lib.config.ts
+.eslintrc*
+.prettierrc*
+
+# Development
+node_modules/
+.vite/
+*.log
+
+# Demo app build (we only want lib build)
+dist/assets/
+dist/index.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+__tests__/
+*.test.*
+*.spec.*
+coverage/

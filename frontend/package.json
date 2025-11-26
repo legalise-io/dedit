@@ -1,27 +1,55 @@
 {
-  "name": "@dedit/react-editor",
+  "name": "dedit-react-editor",
   "version": "0.1.0",
+  "description": "A flexible, unstyled React document editor with track changes and comments support",
+  "author": "Jamie",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/dedit"
+  },
+  "homepage": "https://github.com/yourusername/dedit#readme",
+  "bugs": {
+    "url": "https://github.com/yourusername/dedit/issues"
+  },
+  "keywords": [
+    "react",
+    "editor",
+    "tiptap",
+    "prosemirror",
+    "track-changes",
+    "comments",
+    "word",
+    "docx",
+    "document",
+    "rich-text"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.cjs"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "build:lib": "vite build --config vite.lib.config.ts && tsc --project tsconfig.lib.json",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build:lib"
   },
   "dependencies": {
     "@tiptap/core": "^2.1.0",
@@ -35,19 +63,30 @@
     "@tiptap/extension-table-header": "^2.1.0",
     "@tiptap/extension-table-row": "^2.1.0",
     "@tiptap/extension-text": "^2.1.0",
+    "@tiptap/pm": "^2.1.0",
     "@tiptap/react": "^2.1.0"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": false
+    },
+    "react-dom": {
+      "optional": false
+    }
+  },
   "devDependencies": {
-    "@tiptap/pm": "^2.27.1",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
     "typescript": "^5.3.0",
     "vite": "^5.0.0",
     "vite-plugin-dts": "^3.9.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
