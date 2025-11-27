@@ -25,6 +25,9 @@ type ToolbarItem =
   | "separator"
   | "undo"
   | "redo"
+  | "addRowBefore"
+  | "addRowAfter"
+  | "deleteRow"
   | "trackChangesToggle"
   | "acceptChange"
   | "rejectChange"
@@ -630,6 +633,89 @@ export function DocumentEditor({
             >
               <path d="M21 7v6h-6"></path>
               <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
+            </svg>
+          </button>
+        );
+      case "addRowBefore":
+        return (
+          <button
+            key="addRowBefore"
+            type="button"
+            onClick={() => editor.chain().focus().addRowBefore().run()}
+            className="toolbar-btn"
+            title="Add Row Above"
+            disabled={!editor.can().addRowBefore()}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18"></path>
+              <path d="M3 12h18"></path>
+              <path d="M3 18h18"></path>
+              <path d="M12 3v6"></path>
+              <path d="M9 6l3-3 3 3"></path>
+            </svg>
+          </button>
+        );
+      case "addRowAfter":
+        return (
+          <button
+            key="addRowAfter"
+            type="button"
+            onClick={() => editor.chain().focus().addRowAfter().run()}
+            className="toolbar-btn"
+            title="Add Row Below"
+            disabled={!editor.can().addRowAfter()}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18"></path>
+              <path d="M3 12h18"></path>
+              <path d="M3 18h18"></path>
+              <path d="M12 15v6"></path>
+              <path d="M9 18l3 3 3-3"></path>
+            </svg>
+          </button>
+        );
+      case "deleteRow":
+        return (
+          <button
+            key="deleteRow"
+            type="button"
+            onClick={() => editor.chain().focus().deleteRow().run()}
+            className="toolbar-btn toolbar-btn-reject"
+            title="Delete Row"
+            disabled={!editor.can().deleteRow()}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18"></path>
+              <path d="M3 12h18"></path>
+              <path d="M3 18h18"></path>
+              <path d="M8 12h8"></path>
             </svg>
           </button>
         );
