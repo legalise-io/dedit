@@ -60,6 +60,8 @@ export interface SelectionContext {
 
 export interface AIEditorConfig {
   aiAuthorName?: string;
+  aiModel?: string;
+  aiTemperature?: number;
 }
 
 export interface AIEditorState {
@@ -938,12 +940,12 @@ export function AIEditorProvider({
               Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-              model: "gpt-5-mini",
+              model: config.aiModel || "gpt-5-mini",
               messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: prompt },
               ],
-              temperature: 1.0,
+              temperature: config.aiTemperature ?? 1.0,
               max_completion_tokens: 16384,
               response_format: responseSchema,
             }),
@@ -1024,7 +1026,7 @@ export function AIEditorProvider({
         setIsLoading(false);
       }
     },
-    [apiKey, addMessage, applyEditsAsTrackChanges, config.aiAuthorName],
+    [apiKey, addMessage, applyEditsAsTrackChanges, config],
   );
 
   const value: AIEditorState = {
