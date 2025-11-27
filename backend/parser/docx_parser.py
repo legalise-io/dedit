@@ -157,13 +157,25 @@ class NumberingTracker:
                     if defining_abstract_id in formats:
                         formats[abstract_id] = formats[defining_abstract_id]
 
-        # Map numId to abstractNumId
+        # Map numId to abstractNumId and extract startOverride values
         self._num_to_abstract = {}
+        self._start_overrides = {}  # numId -> {ilvl: start_value}
         for num in numbering_xml.findall(qn("w:num")):
             num_id = num.get(qn("w:numId"))
             abstract_ref = num.find(qn("w:abstractNumId"))
             if abstract_ref is not None:
                 self._num_to_abstract[num_id] = abstract_ref.get(qn("w:val"))
+
+            # Check for lvlOverride with startOverride
+            for lvl_override in num.findall(qn("w:lvlOverride")):
+                ilvl = int(lvl_override.get(qn("w:ilvl")))
+                start_override = lvl_override.find(qn("w:startOverride"))
+                if start_override is not None:
+                    start_val = int(start_override.get(qn("w:val")))
+                    if num_id not in self._start_overrides:
+                        self._start_overrides[num_id] = {}
+                    # Store start-1 because get_number increments before returning
+                    self._start_overrides[num_id][ilvl] = start_val - 1
 
         return formats
 
@@ -171,6 +183,12 @@ class NumberingTracker:
         """Get the computed number for a list item."""
         if num_id not in self.counters:
             self.counters[num_id] = [0] * 10  # Support up to 10 levels
+            # Apply startOverride values if present
+            if num_id in self._start_overrides:
+                for override_ilvl, start_val in self._start_overrides[
+                    num_id
+                ].items():
+                    self.counters[num_id][override_ilvl] = start_val
 
         # Increment current level, reset deeper levels
         self.counters[num_id][ilvl] += 1
