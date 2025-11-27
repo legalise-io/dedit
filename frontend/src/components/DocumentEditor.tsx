@@ -1,6 +1,9 @@
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import Document from "@tiptap/extension-document";
+import { Extension } from "@tiptap/core";
 import { useAIEditorOptional } from "../context/AIEditorContext";
 import { ParagraphWithId } from "../extensions/ParagraphWithId";
 import Text from "@tiptap/extension-text";
@@ -18,6 +21,60 @@ import { Insertion } from "../extensions/Insertion";
 import { Deletion } from "../extensions/Deletion";
 import { Comment } from "../extensions/Comment";
 import { TrackChangesMode } from "../extensions/TrackChangesMode";
+
+// Plugin key for persistent selection
+const persistentSelectionKey = new PluginKey("persistentSelection");
+
+// Extension to show selection highlight when editor loses focus
+const PersistentSelection = Extension.create({
+  name: "persistentSelection",
+
+  addStorage() {
+    return {
+      savedSelection: null as { from: number; to: number } | null,
+    };
+  },
+
+  addProseMirrorPlugins() {
+    const extension = this;
+    return [
+      new Plugin({
+        key: persistentSelectionKey,
+        props: {
+          decorations(state) {
+            const saved = extension.storage.savedSelection;
+            if (!saved) return DecorationSet.empty;
+
+            const { from, to } = saved;
+            // Validate the range is still valid in current doc
+            if (from < 0 || to > state.doc.content.size || from >= to) {
+              return DecorationSet.empty;
+            }
+
+            // Create decorations for each text node in the selection
+            // This avoids gaps between block elements
+            const decorations: Decoration[] = [];
+            state.doc.nodesBetween(from, to, (node, pos) => {
+              if (node.isText) {
+                const start = Math.max(from, pos);
+                const end = Math.min(to, pos + node.nodeSize);
+                if (start < end) {
+                  decorations.push(
+                    Decoration.inline(start, end, {
+                      class: "persistent-selection",
+                    }),
+                  );
+                }
+              }
+            });
+
+            return DecorationSet.create(state.doc, decorations);
+          },
+        },
+      }),
+    ];
+  },
+});
 
 type ToolbarItem =
   | "bold"
@@ -96,6 +153,7 @@ export function DocumentEditor({
         History.configure({
           depth: 100,
         }),
+        PersistentSelection,
       ],
       content: content || {
         type: "doc",
@@ -198,6 +256,34 @@ export function DocumentEditor({
 
   // Track selected change ID for CSS-based highlighting
   const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
+
+  // Save selection when editor loses focus, restore highlight via extension storage
+  useEffect(() => {
+    if (!editor) return;
+
+    const handleFocus = () => {
+      // Clear the persistent selection highlight
+      editor.storage.persistentSelection.savedSelection = null;
+      editor.view.dispatch(editor.state.tr); // Force redraw
+    };
+
+    const handleBlur = () => {
+      const { from, to } = editor.state.selection;
+      if (from !== to) {
+        // Save selection to extension storage for decoration
+        editor.storage.persistentSelection.savedSelection = { from, to };
+        editor.view.dispatch(editor.state.tr); // Force redraw
+      }
+    };
+
+    editor.on("focus", handleFocus);
+    editor.on("blur", handleBlur);
+
+    return () => {
+      editor.off("focus", handleFocus);
+      editor.off("blur", handleBlur);
+    };
+  }, [editor]);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{

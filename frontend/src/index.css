@@ -120,6 +120,17 @@ body {
     min-height: 300px;
 }
 
+/* Persistent selection highlight when editor loses focus */
+.tiptap .persistent-selection {
+    background-color: #dfdfdf;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    margin-top: -3px;
+    margin-bottom: -3px;
+}
+
 .tiptap p {
     margin: 0 0 0.75rem 0;
 }
