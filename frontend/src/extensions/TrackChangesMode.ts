@@ -128,26 +128,54 @@ export const TrackChangesMode = Extension.create<
           const author = extension.storage.author;
           const date = getCurrentDate();
 
-          let tr = newState.tr;
-          let modified = false;
+          // Collect all changes first, then apply them
+          // This avoids position corruption when processing multiple steps
+          interface PendingChange {
+            type: "deletion" | "insertion";
+            // For deletions: position in newState where to insert the deleted text
+            // For insertions: position range in newState to mark
+            from: number;
+            to: number;
+            text: string;
+          }
 
-          // Process each transaction
+          const pendingChanges: PendingChange[] = [];
+
+          // Process each transaction to collect changes
           for (const transaction of transactions) {
             if (!transaction.docChanged) continue;
 
-            // Analyze each step in the transaction
+            // We need to track position mapping through the steps
+            // to correctly identify where in oldState each step's positions refer to
+            let stepIndex = 0;
             for (const step of transaction.steps) {
               if (step instanceof ReplaceStep) {
                 const { from, to } = step as ReplaceStep;
                 const slice = (step as ReplaceStep).slice;
 
+                // Map positions back through previous steps to get oldState positions
+                // for reading deleted content
+                let oldFrom = from;
+                let oldTo = to;
+                for (let i = 0; i < stepIndex; i++) {
+                  const prevStep = transaction.steps[i];
+                  const map = prevStep.getMap();
+                  oldFrom = map.invert().map(oldFrom);
+                  oldTo = map.invert().map(oldTo);
+                }
+
                 // Get the content that was deleted (from old state)
-                const deletedContent = oldState.doc.textBetween(
-                  from,
-                  to,
-                  "",
-                  "",
-                );
+                let deletedContent = "";
+                try {
+                  deletedContent = oldState.doc.textBetween(
+                    oldFrom,
+                    oldTo,
+                    "",
+                    "",
+                  );
+                } catch {
+                  // Position out of bounds, skip
+                }
 
                 // Get the content that was inserted
                 let insertedText = "";
@@ -163,71 +191,101 @@ export const TrackChangesMode = Extension.create<
                   }
                 });
 
-                // Handle deletion: We need to revert the deletion and add deletion mark
-                if (deletedContent && deletedContent.length > 0) {
-                  // The text was already deleted in newState, we need to re-insert it with deletion mark
-                  // First, find where the deletion happened in the new document
-                  const insertPos = from;
-
-                  // Create a text node with deletion mark
-                  const deletionMark = newState.schema.marks.deletion.create({
-                    id: generateChangeId("del"),
-                    author: author,
-                    date: date,
-                  });
-
-                  const textNode = newState.schema.text(deletedContent, [
-                    deletionMark,
-                  ]);
-
-                  // Insert the deleted text back with the deletion mark
-                  tr = tr.insert(insertPos, textNode);
-                  modified = true;
+                // Map positions forward through ONLY the remaining steps
+                // (from current step onwards) to get the position in newState.
+                // The step's `from` is already relative to the doc state after previous steps,
+                // so we only need to map through steps that come after this one.
+                let mappedFrom = from;
+                for (let i = stepIndex; i < transaction.steps.length; i++) {
+                  const laterStep = transaction.steps[i];
+                  const map = laterStep.getMap();
+                  mappedFrom = map.map(mappedFrom);
                 }
 
-                // Handle insertion: Add insertion mark to newly inserted text
-                if (insertedText && insertedText.length > 0) {
-                  // The text is already in newState, we just need to add the insertion mark
-                  // Calculate position accounting for any previous insertions in this transaction
-                  const mappedFrom = tr.mapping.map(from);
-                  const mappedTo = mappedFrom + insertedText.length;
-
-                  const insertionMark = newState.schema.marks.insertion.create({
-                    id: generateChangeId("ins"),
-                    author: author,
-                    date: date,
+                if (deletedContent && deletedContent.length > 0) {
+                  pendingChanges.push({
+                    type: "deletion",
+                    from: mappedFrom,
+                    to: mappedFrom,
+                    text: deletedContent,
                   });
+                }
 
-                  // Check if this text already has an insertion mark (to avoid double marking)
+                if (insertedText && insertedText.length > 0) {
+                  // Check if this text already has an insertion mark
                   let hasInsertionMark = false;
-                  newState.doc.nodesBetween(
-                    from,
-                    from + insertedText.length,
-                    (node) => {
-                      if (
-                        node.isText &&
-                        node.marks.some((m) => m.type.name === "insertion")
-                      ) {
-                        hasInsertionMark = true;
-                      }
-                    },
-                  );
+                  try {
+                    newState.doc.nodesBetween(
+                      mappedFrom,
+                      Math.min(
+                        mappedFrom + insertedText.length,
+                        newState.doc.content.size,
+                      ),
+                      (node) => {
+                        if (
+                          node.isText &&
+                          node.marks.some((m) => m.type.name === "insertion")
+                        ) {
+                          hasInsertionMark = true;
+                        }
+                      },
+                    );
+                  } catch {
+                    // Position issues, mark anyway
+                  }
 
                   if (!hasInsertionMark) {
-                    tr = tr.addMark(mappedFrom, mappedTo, insertionMark);
-                    modified = true;
+                    pendingChanges.push({
+                      type: "insertion",
+                      from: mappedFrom,
+                      to: mappedFrom + insertedText.length,
+                      text: insertedText,
+                    });
                   }
                 }
               }
+              stepIndex++;
             }
           }
 
-          if (modified) {
-            tr.setMeta("trackChangesProcessed", true);
-            return tr;
+          if (pendingChanges.length === 0) {
+            return null;
           }
 
-          return null;
+          // Apply changes in reverse order (from end to start) to preserve positions
+          pendingChanges.sort((a, b) => b.from - a.from);
+
+          let tr = newState.tr;
+
+          for (const change of pendingChanges) {
+            if (change.type === "deletion") {
+              const deletionMark = newState.schema.marks.deletion.create({
+                id: generateChangeId("del"),
+                author: author,
+                date: date,
+              });
+
+              const textNode = newState.schema.text(change.text, [
+                deletionMark,
+              ]);
+
+              const mappedPos = tr.mapping.map(change.from);
+              tr = tr.insert(mappedPos, textNode);
+            } else {
+              const insertionMark = newState.schema.marks.insertion.create({
+                id: generateChangeId("ins"),
+                author: author,
+                date: date,
+              });
+
+              const mappedFrom = tr.mapping.map(change.from);
+              const mappedTo = tr.mapping.map(change.to);
+              tr = tr.addMark(mappedFrom, mappedTo, insertionMark);
+            }
+          }
+
+          tr.setMeta("trackChangesProcessed", true);
+          return tr;
         },
       }),
     ];
