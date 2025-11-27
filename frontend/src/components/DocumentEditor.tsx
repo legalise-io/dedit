@@ -1,6 +1,7 @@
 import { useEditor, EditorContent, Editor } from "@tiptap/react";
 import { useEffect, useMemo, useCallback, useRef, useState } from "react";
 import Document from "@tiptap/extension-document";
+import { useAIEditorOptional } from "../context/AIEditorContext";
 import { ParagraphWithId } from "../extensions/ParagraphWithId";
 import Text from "@tiptap/extension-text";
 import Heading from "@tiptap/extension-heading";
@@ -57,6 +58,10 @@ export function DocumentEditor({
   onTrackChangesToggle,
 }: DocumentEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement>(null);
+
+  // Get AI editor context if available (for syncing edit status)
+  const aiEditorContext = useAIEditorOptional();
+
   const editor = useEditor(
     {
       extensions: [
@@ -184,6 +189,13 @@ export function DocumentEditor({
 
   // Track selected change ID for CSS-based highlighting
   const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    hasChangesInSelection: boolean;
+  } | null>(null);
 
   // Function to select a change by its ID (used by AI chat panel)
   const selectChangeById = useCallback(
@@ -320,8 +332,10 @@ export function DocumentEditor({
       } else {
         editor.commands.acceptDeletion(change.id);
       }
+      // Sync with AI editor context if available
+      aiEditorContext?.updateEditStatusByTrackChangeId(change.id, "accepted");
     },
-    [editor],
+    [editor, aiEditorContext],
   );
 
   const rejectChange = useCallback(
@@ -332,8 +346,10 @@ export function DocumentEditor({
       } else {
         editor.commands.rejectDeletion(change.id);
       }
+      // Sync with AI editor context if available
+      aiEditorContext?.updateEditStatusByTrackChangeId(change.id, "rejected");
     },
-    [editor],
+    [editor, aiEditorContext],
   );
 
   // Helper to select change at index by querying fresh DOM
@@ -416,6 +432,93 @@ export function DocumentEditor({
   const rejectAllChanges = useCallback(() => {
     [...changes].sort((a, b) => b.from - a.from).forEach(rejectChange);
   }, [changes, rejectChange]);
+
+  // Get changes within the current text selection
+  const getChangesInSelection = useCallback((): TrackedChange[] => {
+    if (!editor) return [];
+
+    const { from, to } = editor.state.selection;
+    if (from === to) return []; // No selection
+
+    const changesInSelection: TrackedChange[] = [];
+    const doc = editor.state.doc;
+
+    doc.nodesBetween(from, to, (node, pos) => {
+      if (node.isText && node.marks) {
+        node.marks.forEach((mark) => {
+          if (mark.type.name === "insertion" || mark.type.name === "deletion") {
+            // Check if this change overlaps with selection
+            const markFrom = pos;
+            const markTo = pos + node.nodeSize;
+            if (markFrom < to && markTo > from) {
+              // Check if we already have this change (by id)
+              const existing = changesInSelection.find(
+                (c) => c.id === mark.attrs.id,
+              );
+              if (!existing) {
+                changesInSelection.push({
+                  id: mark.attrs.id,
+                  type: mark.type.name as "insertion" | "deletion",
+                  author: mark.attrs.author,
+                  date: mark.attrs.date,
+                  text: node.text || "",
+                  from: markFrom,
+                  to: markTo,
+                });
+              }
+            }
+          }
+        });
+      }
+    });
+
+    return changesInSelection;
+  }, [editor]);
+
+  // Accept all changes in the current selection
+  const acceptChangesInSelection = useCallback(() => {
+    const changesInSel = getChangesInSelection();
+    // Process from end to start to preserve positions
+    [...changesInSel].sort((a, b) => b.from - a.from).forEach(acceptChange);
+    setContextMenu(null);
+  }, [getChangesInSelection, acceptChange]);
+
+  // Reject all changes in the current selection
+  const rejectChangesInSelection = useCallback(() => {
+    const changesInSel = getChangesInSelection();
+    // Process from end to start to preserve positions
+    [...changesInSel].sort((a, b) => b.from - a.from).forEach(rejectChange);
+    setContextMenu(null);
+  }, [getChangesInSelection, rejectChange]);
+
+  // Handle context menu (right-click)
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const changesInSel = getChangesInSelection();
+      setContextMenu({
+        x: e.clientX,
+        y: e.clientY,
+        hasChangesInSelection: changesInSel.length > 0,
+      });
+    },
+    [getChangesInSelection],
+  );
+
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null);
+    const handleScroll = () => setContextMenu(null);
+
+    if (contextMenu) {
+      document.addEventListener("click", handleClick);
+      document.addEventListener("scroll", handleScroll, true);
+      return () => {
+        document.removeEventListener("click", handleClick);
+        document.removeEventListener("scroll", handleScroll, true);
+      };
+    }
+  }, [contextMenu]);
 
   if (!editor) {
     return <div className="loading">Loading editor...</div>;
@@ -673,9 +776,69 @@ export function DocumentEditor({
           {toolbar.map((item, index) => renderToolbarItem(item, index))}
         </div>
       )}
-      <div className="editor-scroll-container" ref={editorContainerRef}>
+      <div
+        className="editor-scroll-container"
+        ref={editorContainerRef}
+        onContextMenu={handleContextMenu}
+      >
         <EditorContent editor={editor} className="tiptap" />
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="editor-context-menu"
+          style={{
+            position: "fixed",
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+        >
+          {contextMenu.hasChangesInSelection ? (
+            <>
+              <button
+                type="button"
+                className="context-menu-item context-menu-item--accept"
+                onClick={acceptChangesInSelection}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Accept Changes in Selection
+              </button>
+              <button
+                type="button"
+                className="context-menu-item context-menu-item--reject"
+                onClick={rejectChangesInSelection}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+                Reject Changes in Selection
+              </button>
+            </>
+          ) : (
+            <div className="context-menu-item context-menu-item--disabled">
+              No changes in selection
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

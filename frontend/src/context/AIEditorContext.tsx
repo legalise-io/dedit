@@ -107,6 +107,12 @@ export interface AIEditorState {
 
   // Get next edit after the given one
   getNextEdit: (currentEdit: AIEdit) => AIEdit | null;
+
+  // Update edit status by track change ID (for external sync)
+  updateEditStatusByTrackChangeId: (
+    trackChangeId: string,
+    status: AIEdit["status"],
+  ) => void;
 }
 
 const AIEditorContext = createContext<AIEditorState | null>(null);
@@ -555,6 +561,33 @@ export function AIEditorProvider({
           const updatedEdits = message.metadata.edits.map((edit) =>
             edit.id === editId ? { ...edit, status } : edit,
           );
+          return {
+            ...message,
+            metadata: { ...message.metadata, edits: updatedEdits },
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  // Update edit status by track change ID (deletion or insertion ID)
+  // This is used when changes are accepted/rejected via context menu or toolbar
+  const updateEditStatusByTrackChangeId = useCallback(
+    (trackChangeId: string, status: AIEdit["status"]) => {
+      setMessages((prevMessages) =>
+        prevMessages.map((message) => {
+          if (!message.metadata?.edits) return message;
+          const updatedEdits = message.metadata.edits.map((edit) => {
+            // Match by either deletionId or insertionId
+            if (
+              edit.deletionId === trackChangeId ||
+              edit.insertionId === trackChangeId
+            ) {
+              return { ...edit, status };
+            }
+            return edit;
+          });
           return {
             ...message,
             metadata: { ...message.metadata, edits: updatedEdits },
@@ -1051,6 +1084,7 @@ export function AIEditorProvider({
     rejectEdit,
     getPendingEdits,
     getNextEdit,
+    updateEditStatusByTrackChangeId,
   };
 
   return (
