@@ -228,11 +228,8 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
       return classes.join(" ") || undefined;
     }, [className, classNames.root]);
 
-    if (!editor) {
-      return null;
-    }
-
     // Track current change index for next/prev navigation
+    // NOTE: All hooks must be called before any early returns to comply with React's Rules of Hooks
     const [currentChangeIndex, setCurrentChangeIndex] = useState(-1);
 
     // Reset index when changes array changes significantly
@@ -310,6 +307,40 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
     }, [currentChangeIndex, changes, rejectChange]);
 
     const trackChangesEnabled = trackChanges?.enabled ?? false;
+
+    // Add/remove selected-change class to highlight current change
+    useEffect(() => {
+      if (!editor) return;
+
+      const editorDom = editorContainerRef.current;
+      if (!editorDom) return;
+
+      // Remove previous selected-change highlights
+      editorDom.querySelectorAll(".selected-change").forEach((el) => {
+        el.classList.remove("selected-change");
+      });
+
+      // Add highlight to current change
+      if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
+        const change = changes[currentChangeIndex];
+
+        // Find the element by its data attribute
+        const selector =
+          change.type === "insertion"
+            ? `ins[data-insertion-id="${change.id}"]`
+            : `del[data-deletion-id="${change.id}"]`;
+
+        const element = editorDom.querySelector(selector);
+        if (element) {
+          element.classList.add("selected-change");
+        }
+      }
+    }, [editor, currentChangeIndex, changes]);
+
+    // Early return after all hooks have been called
+    if (!editor) {
+      return null;
+    }
 
     const renderToolbarItem = (item: ToolbarItem) => {
       switch (item) {
@@ -540,35 +571,6 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
           return null;
       }
     };
-
-    // Add/remove selected-change class to highlight current change
-    useEffect(() => {
-      if (!editor) return;
-
-      const editorDom = editorContainerRef.current;
-      if (!editorDom) return;
-
-      // Remove previous selected-change highlights
-      editorDom.querySelectorAll(".selected-change").forEach((el) => {
-        el.classList.remove("selected-change");
-      });
-
-      // Add highlight to current change
-      if (currentChangeIndex >= 0 && currentChangeIndex < changes.length) {
-        const change = changes[currentChangeIndex];
-
-        // Find the element by its data attribute
-        const selector =
-          change.type === "insertion"
-            ? `ins[data-insertion-id="${change.id}"]`
-            : `del[data-deletion-id="${change.id}"]`;
-
-        const element = editorDom.querySelector(selector);
-        if (element) {
-          element.classList.add("selected-change");
-        }
-      }
-    }, [editor, currentChangeIndex, changes]);
 
     return (
       <div className={rootClassName} style={style}>
