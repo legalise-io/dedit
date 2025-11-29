@@ -535,7 +535,8 @@ type ToolbarItem =
   | "rejectAll"         // Reject all changes
   | "addRowBefore"      // Add table row above cursor
   | "addRowAfter"       // Add table row below cursor
-  | "deleteRow";        // Delete current table row
+  | "deleteRow"         // Delete current table row
+  | "findReplace";      // Toggle find & replace bar
 ```
 
 ### Example Configuration
@@ -549,6 +550,12 @@ type ToolbarItem =
     "bold",
     "italic",
     "separator",
+    "findReplace",
+    "separator",
+    "addRowBefore",
+    "addRowAfter",
+    "deleteRow",
+    "separator",
     "trackChangesToggle",
     "separator",
     "prevChange",
@@ -558,10 +565,6 @@ type ToolbarItem =
     "separator",
     "acceptAll",
     "rejectAll",
-    "separator",
-    "addRowBefore",
-    "addRowAfter",
-    "deleteRow",
   ]}
 />
 ```
@@ -1140,6 +1143,15 @@ import {
   TableWithId,         // Table node with ID support
   ParagraphWithId,     // Paragraph node with UUID support (required for AI editing)
   PersistentSelection, // Shows selection highlight when editor loses focus
+  SearchAndReplace,    // Find & replace functionality
+} from 'dedit-react-editor';
+```
+
+### Exported UI Components
+
+```typescript
+import {
+  FindReplaceBar,      // Find & replace toolbar component
 } from 'dedit-react-editor';
 ```
 
@@ -1276,6 +1288,83 @@ CSS required for the persistent selection highlight:
 ```
 
 **Note:** The default styles (`dedit-react-editor/styles.css`) already include this CSS.
+
+#### SearchAndReplace
+
+An extension that provides find and replace functionality. It's included by default in the editor and powers the `findReplace` toolbar item.
+
+```typescript
+import { useEditor } from '@tiptap/react';
+import { SearchAndReplace } from 'dedit-react-editor';
+
+const editor = useEditor({
+  extensions: [
+    SearchAndReplace.configure({
+      searchResultClass: "search-result",  // CSS class for matches
+    }),
+    // ... other extensions
+  ],
+});
+
+// Programmatic usage
+editor.commands.setSearchTerm("hello");
+editor.commands.setReplaceTerm("world");
+editor.commands.nextSearchResult();
+editor.commands.previousSearchResult();
+editor.commands.replace();      // Replace current match
+editor.commands.replaceAll();   // Replace all matches
+```
+
+CSS for search result highlighting:
+
+```css
+.tiptap .search-result {
+  background-color: #fff59d;
+}
+
+.tiptap .search-result-current {
+  background-color: #ffcc02;
+}
+```
+
+**Note:** The default styles (`dedit-react-editor/styles.css`) already include this CSS.
+
+#### FindReplaceBar
+
+A ready-to-use UI component for find and replace. Used internally by the `findReplace` toolbar item, but can also be used standalone:
+
+```tsx
+import { FindReplaceBar } from 'dedit-react-editor';
+
+function MyEditor() {
+  const [showFindReplace, setShowFindReplace] = useState(false);
+  const editor = useEditor({ /* ... */ });
+
+  return (
+    <div>
+      <button onClick={() => setShowFindReplace(true)}>Find</button>
+      
+      {showFindReplace && (
+        <FindReplaceBar
+          editor={editor}
+          onClose={() => setShowFindReplace(false)}
+        />
+      )}
+      
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+```
+
+**Props:**
+- `editor` (required) - TipTap editor instance
+- `onClose` (required) - Callback when user closes the bar (Escape key or close button)
+
+**Keyboard shortcuts within the bar:**
+- `Enter` - Go to next match
+- `Shift+Enter` - Go to previous match
+- `Escape` - Close the find/replace bar
 
 ---
 

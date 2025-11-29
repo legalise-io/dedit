@@ -9,6 +9,7 @@ import Italic from "@tiptap/extension-italic";
 import TableRow from "@tiptap/extension-table-row";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
+import History from "@tiptap/extension-history";
 
 import Section from "../../extensions/Section";
 import TableWithId from "../../extensions/TableWithId";
@@ -16,6 +17,7 @@ import { Insertion } from "../../extensions/Insertion";
 import { Deletion } from "../../extensions/Deletion";
 import { Comment } from "../../extensions/Comment";
 import { TrackChangesMode } from "../../extensions/TrackChangesMode";
+import { SearchAndReplace } from "../../extensions/SearchAndReplace";
 
 import type { TipTapDocument, UseDocumentEditorOptions } from "../types";
 
@@ -85,6 +87,12 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       TrackChangesMode.configure({
         enabled: trackChangesEnabled,
         author: trackChangesAuthor,
+      }),
+      History.configure({
+        depth: 100,
+      }),
+      SearchAndReplace.configure({
+        searchResultClass: "search-result",
       }),
       ...additionalExtensions,
     ];

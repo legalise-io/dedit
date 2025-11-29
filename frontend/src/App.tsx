@@ -309,13 +309,25 @@ function AppContent() {
                 content={document?.tiptap || undefined}
                 onChange={handleEditorChange}
                 toolbar={[
+                  "undo",
+                  "redo",
+                  "separator",
                   "bold",
                   "italic",
+                  "separator",
+                  "findReplace",
+                  "separator",
+                  "addRowBefore",
+                  "addRowAfter",
+                  "deleteRow",
+                  "separator",
                   "trackChangesToggle",
+                  "separator",
                   "prevChange",
                   "nextChange",
                   "acceptChange",
                   "rejectChange",
+                  "separator",
                   "acceptAll",
                   "rejectAll",
                 ]}

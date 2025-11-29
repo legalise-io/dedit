@@ -13,6 +13,7 @@ import { useDocumentEditor } from "./hooks/useDocumentEditor";
 import { useTrackChanges } from "./hooks/useTrackChanges";
 import { useComments } from "./hooks/useComments";
 import { createExportPayload } from "./utils/createExportPayload";
+import { FindReplaceBar } from "../components/FindReplaceBar";
 
 import type {
   DocumentEditorProps,
@@ -232,6 +233,7 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
     // Track current change index for next/prev navigation
     // NOTE: All hooks must be called before any early returns to comply with React's Rules of Hooks
     const [currentChangeIndex, setCurrentChangeIndex] = useState(-1);
+    const [showFindReplace, setShowFindReplace] = useState(false);
 
     // Reset index when changes array changes significantly
     useEffect(() => {
@@ -343,8 +345,60 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
       return null;
     }
 
-    const renderToolbarItem = (item: ToolbarItem) => {
+    const renderToolbarItem = (item: ToolbarItem, index: number) => {
       switch (item) {
+        case "separator":
+          return <div key={`sep-${index}`} className="toolbar-separator" />;
+        case "undo":
+          return (
+            <button
+              key="undo"
+              type="button"
+              onClick={() => editor.chain().focus().undo().run()}
+              className="toolbar-btn"
+              title="Undo (Ctrl+Z)"
+              disabled={!editor.can().undo()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 7v6h6"></path>
+                <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
+              </svg>
+            </button>
+          );
+        case "redo":
+          return (
+            <button
+              key="redo"
+              type="button"
+              onClick={() => editor.chain().focus().redo().run()}
+              className="toolbar-btn"
+              title="Redo (Ctrl+Y)"
+              disabled={!editor.can().redo()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21 7v6h-6"></path>
+                <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
+              </svg>
+            </button>
+          );
         case "bold":
           return (
             <button
@@ -568,6 +622,113 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
               </svg>
             </button>
           );
+        case "addRowBefore":
+          return (
+            <button
+              key="addRowBefore"
+              type="button"
+              onClick={() => editor.chain().focus().addRowBefore().run()}
+              className="toolbar-btn"
+              title="Add Row Above"
+              disabled={!editor.can().addRowBefore()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18"></path>
+                <path d="M3 12h18"></path>
+                <path d="M3 18h18"></path>
+                <path d="M12 3v6"></path>
+                <path d="M9 6l3-3 3 3"></path>
+              </svg>
+            </button>
+          );
+        case "addRowAfter":
+          return (
+            <button
+              key="addRowAfter"
+              type="button"
+              onClick={() => editor.chain().focus().addRowAfter().run()}
+              className="toolbar-btn"
+              title="Add Row Below"
+              disabled={!editor.can().addRowAfter()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18"></path>
+                <path d="M3 12h18"></path>
+                <path d="M3 18h18"></path>
+                <path d="M12 15v6"></path>
+                <path d="M9 18l3 3 3-3"></path>
+              </svg>
+            </button>
+          );
+        case "deleteRow":
+          return (
+            <button
+              key="deleteRow"
+              type="button"
+              onClick={() => editor.chain().focus().deleteRow().run()}
+              className="toolbar-btn toolbar-btn-reject"
+              title="Delete Row"
+              disabled={!editor.can().deleteRow()}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 6h18"></path>
+                <path d="M3 12h18"></path>
+                <path d="M3 18h18"></path>
+                <path d="M8 12h8"></path>
+              </svg>
+            </button>
+          );
+        case "findReplace":
+          return (
+            <button
+              key="findReplace"
+              type="button"
+              onClick={() => setShowFindReplace((prev) => !prev)}
+              className={`toolbar-btn ${showFindReplace ? "is-active" : ""}`}
+              title="Find & Replace (Ctrl+F)"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </button>
+          );
         default:
           return null;
       }
@@ -576,7 +737,15 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
     return (
       <div className={rootClassName} style={style}>
         {toolbar && toolbar.length > 0 && (
-          <div className="editor-toolbar">{toolbar.map(renderToolbarItem)}</div>
+          <div className="editor-toolbar">
+            {toolbar.map((item, index) => renderToolbarItem(item, index))}
+          </div>
+        )}
+        {showFindReplace && (
+          <FindReplaceBar
+            editor={editor}
+            onClose={() => setShowFindReplace(false)}
+          />
         )}
         <div className="editor-scroll-container" ref={editorContainerRef}>
           <EditorContent editor={editor} className={classNames.content} />

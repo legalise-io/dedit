@@ -120,13 +120,20 @@ export interface ExtensionConfig {
 export type ToolbarItem =
   | "bold"
   | "italic"
+  | "separator"
+  | "undo"
+  | "redo"
   | "trackChangesToggle"
   | "acceptChange"
   | "rejectChange"
   | "prevChange"
   | "nextChange"
   | "acceptAll"
-  | "rejectAll";
+  | "rejectAll"
+  | "addRowBefore"
+  | "addRowAfter"
+  | "deleteRow"
+  | "findReplace";
 
 /**
  * Template configuration for export
