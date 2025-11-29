@@ -359,6 +359,39 @@ Track changes records insertions and deletions with author attribution.
 />
 ```
 
+### Controlled Track Changes State
+
+For parent component control over the track changes toggle, use `onEnabledChange`:
+
+```tsx
+function MyEditor() {
+  const [trackChangesEnabled, setTrackChangesEnabled] = useState(false);
+
+  return (
+    <>
+      {/* External toggle button */}
+      <button onClick={() => setTrackChangesEnabled(!trackChangesEnabled)}>
+        Track Changes: {trackChangesEnabled ? 'ON' : 'OFF'}
+      </button>
+
+      <DocumentEditor
+        trackChanges={{
+          enabled: trackChangesEnabled,
+          author: "John Doe",
+          onEnabledChange: setTrackChangesEnabled,  // Called when toolbar toggle is clicked
+        }}
+        toolbar={["trackChangesToggle", "acceptAll", "rejectAll"]}
+      />
+    </>
+  );
+}
+```
+
+When the user clicks the `trackChangesToggle` button in the toolbar, `onEnabledChange` is called with the new state, allowing you to:
+- Update parent state
+- Persist the preference
+- Sync with other UI elements
+
 ### TrackedChange Type
 
 ```typescript

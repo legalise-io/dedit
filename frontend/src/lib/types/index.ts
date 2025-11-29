@@ -62,6 +62,8 @@ export interface TrackChangesConfig {
   enabled: boolean;
   /** Current author name for new changes */
   author: string;
+  /** Called when enabled state changes (e.g., from toolbar toggle) */
+  onEnabledChange?: (enabled: boolean) => void;
   /** Called when author should change (optional) */
   onAuthorChange?: (author: string) => void;
   /** Called when a change is accepted */

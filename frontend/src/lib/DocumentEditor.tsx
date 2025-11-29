@@ -116,6 +116,7 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
     } = useTrackChanges(editor, {
       enabled: trackChanges?.enabled,
       author: trackChanges?.author,
+      onEnabledChange: trackChanges?.onEnabledChange,
       onAuthorChange: trackChanges?.onAuthorChange,
       onAccept: trackChanges?.onAccept,
       onReject: trackChanges?.onReject,

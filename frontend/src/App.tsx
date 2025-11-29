@@ -1,6 +1,5 @@
-import { useState, useCallback } from "react";
-import { Editor } from "@tiptap/react";
-import DocumentEditor from "./components/DocumentEditor";
+import { useState, useCallback, useRef } from "react";
+import { DocumentEditor, type EditorHandle, type TipTapDocument } from "./lib";
 import FileUpload from "./components/FileUpload";
 import {
   AIEditorProvider,
@@ -36,6 +35,7 @@ type TemplateOption = "none" | "original" | "custom";
 // Inner component that uses the AI context
 function AppContent() {
   const { setEditor } = useAIEditor();
+  const editorRef = useRef<EditorHandle>(null);
 
   const [document, setDocument] = useState<DocumentData | null>(null);
   const [editorJson, setEditorJson] = useState<Record<string, unknown> | null>(
@@ -53,10 +53,15 @@ function AppContent() {
   const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
   const [showJson, setShowJson] = useState(false);
 
-  const handleEditorReady = useCallback(
-    (editorInstance: Editor) => {
-      // Register editor with AI context
-      setEditor(editorInstance);
+  // Register editor with AI context when it becomes available
+  const handleEditorChange = useCallback(
+    (content: TipTapDocument | Record<string, unknown>) => {
+      setEditorJson(content as Record<string, unknown>);
+      // Register editor with AI context on first change
+      const editor = editorRef.current?.getEditor();
+      if (editor) {
+        setEditor(editor);
+      }
     },
     [setEditor],
   );
@@ -90,10 +95,6 @@ function AppContent() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const handleEditorUpdate = (json: Record<string, unknown>) => {
-    setEditorJson(json);
   };
 
   const handleTemplateUpload = async (file: File) => {
@@ -304,34 +305,25 @@ function AppContent() {
             </div>
             <div className="editor-content">
               <DocumentEditor
-                content={document?.tiptap || null}
-                onUpdate={handleEditorUpdate}
-                onEditorReady={handleEditorReady}
+                ref={editorRef}
+                content={document?.tiptap || undefined}
+                onChange={handleEditorChange}
                 toolbar={[
-                  "undo",
-                  "redo",
-                  "separator",
                   "bold",
                   "italic",
-                  "separator",
-                  "findReplace",
-                  "separator",
-                  "addRowBefore",
-                  "addRowAfter",
-                  "deleteRow",
-                  "separator",
                   "trackChangesToggle",
-                  "separator",
                   "prevChange",
                   "nextChange",
                   "acceptChange",
                   "rejectChange",
-                  "separator",
                   "acceptAll",
                   "rejectAll",
                 ]}
-                trackChangesEnabled={trackChangesEnabled}
-                onTrackChangesToggle={setTrackChangesEnabled}
+                trackChanges={{
+                  enabled: trackChangesEnabled,
+                  author: "Current User",
+                  onEnabledChange: setTrackChangesEnabled,
+                }}
               />
             </div>
             {showJson && (
