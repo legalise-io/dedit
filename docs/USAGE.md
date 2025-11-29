@@ -1168,6 +1168,41 @@ const paragraph = document.querySelector('[data-paragraph-index="5"]');
 paragraph?.scrollIntoView({ behavior: 'smooth' });
 ```
 
+**Dynamic Styling with className**
+
+The extension includes a built-in `className` attribute that renders as an actual `class` attribute (not `data-class-name`). This allows external components to dynamically style paragraphs:
+
+```typescript
+// Set class via editor transaction
+editor.commands.command(({ tr, state }) => {
+  state.doc.descendants((node, pos) => {
+    if (node.type.name === "paragraph" && node.attrs.paragraphIndex === 5) {
+      tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        className: "highlighted",
+      });
+    }
+  });
+  return true;
+});
+
+// Or in document JSON
+{ "type": "paragraph", "attrs": { "id": "p-5", "className": "highlighted" } }
+```
+
+Rendered HTML:
+```html
+<p data-paragraph-id="p-5" class="highlighted">Content here</p>
+```
+
+CSS:
+```css
+.tiptap p.highlighted {
+  background-color: #fff3cd;
+  border-left: 3px solid #ffc107;
+}
+```
+
 #### PersistentSelection
 
 An extension that preserves the visual appearance of selected text when the editor loses focus. This is useful for AI editing workflows where users select text, then click on a prompt input to describe what to do with that selection.

@@ -83,6 +83,17 @@ export const ParagraphWithId = Paragraph.extend<ParagraphWithIdOptions>({
           return { "data-paragraph-id": id };
         },
       },
+      // className renders as `class` attribute, not `data-class-name`
+      // Useful for dynamic styling from external components
+      className: {
+        default: null,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("class") || null,
+        renderHTML: (attributes: Record<string, unknown>) => {
+          if (!attributes.className) return {};
+          return { class: attributes.className };
+        },
+      },
     };
 
     // Add custom attributes if configured
