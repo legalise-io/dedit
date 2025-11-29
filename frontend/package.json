@@ -1,6 +1,6 @@
 {
   "name": "dedit-react-editor",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "A flexible, unstyled React document editor with track changes and comments support",
   "author": "Jamie",
   "license": "AGPL-3.0-only",
