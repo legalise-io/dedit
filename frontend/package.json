@@ -1,6 +1,6 @@
 {
   "name": "dedit-react-editor",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "A flexible, unstyled React document editor with track changes and comments support",
   "author": "Jamie",
   "license": "AGPL-3.0-only",
@@ -33,7 +33,8 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./styles.css": "./dist/styles.css"
   },
   "files": [
     "dist",
