@@ -191,12 +191,12 @@ export const TrackChangesMode = Extension.create<
                   }
                 });
 
-                // Map positions forward through ONLY the remaining steps
-                // (from current step onwards) to get the position in newState.
-                // The step's `from` is already relative to the doc state after previous steps,
+                // Map positions forward through steps AFTER the current one
+                // to get the position in newState.
+                // The step's `from` is relative to the doc state after previous steps,
                 // so we only need to map through steps that come after this one.
                 let mappedFrom = from;
-                for (let i = stepIndex; i < transaction.steps.length; i++) {
+                for (let i = stepIndex + 1; i < transaction.steps.length; i++) {
                   const laterStep = transaction.steps[i];
                   const map = laterStep.getMap();
                   mappedFrom = map.map(mappedFrom);
