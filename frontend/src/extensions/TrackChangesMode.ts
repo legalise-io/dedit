@@ -125,6 +125,18 @@ export const TrackChangesMode = Extension.create<
             return null;
           }
 
+          // Skip undo/redo transactions - these should restore original state, not create new changes
+          if (
+            transactions.some(
+              (tr) =>
+                tr.getMeta("history$") ||
+                tr.getMeta("undo") ||
+                tr.getMeta("redo"),
+            )
+          ) {
+            return null;
+          }
+
           const author = extension.storage.author;
           const date = getCurrentDate();
 

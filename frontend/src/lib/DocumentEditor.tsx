@@ -227,10 +227,10 @@ export const DocumentEditor = forwardRef<EditorHandle, DocumentEditorProps>(
 
     // Build class names
     const rootClassName = useMemo(() => {
-      const classes: string[] = [];
+      const classes: string[] = ["document-editor"];
       if (className) classes.push(className);
       if (classNames.root) classes.push(classNames.root);
-      return classes.join(" ") || undefined;
+      return classes.join(" ");
     }, [className, classNames.root]);
 
     // Track current change index for next/prev navigation

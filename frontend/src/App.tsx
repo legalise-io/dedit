@@ -365,7 +365,15 @@ function AppContent() {
                 {showJson ? "Hide JSON" : "Show JSON"}
               </button>
             </div>
-            <div className="editor-content">
+            <div
+              className="editor-content"
+              style={{
+                height: "500px",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
+            >
               <DocumentEditor
                 ref={editorRef}
                 content={document?.tiptap || undefined}
