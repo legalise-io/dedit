@@ -142,6 +142,11 @@ export const TrackChangesMode = Extension.create<
 
           // Collect all changes first, then apply them
           // This avoids position corruption when processing multiple steps
+          interface DeletedFragment {
+            text: string;
+            marks: readonly import("@tiptap/pm/model").Mark[];
+          }
+
           interface PendingChange {
             type: "deletion" | "insertion";
             // For deletions: position in newState where to insert the deleted text
@@ -149,6 +154,8 @@ export const TrackChangesMode = Extension.create<
             from: number;
             to: number;
             text: string;
+            // For deletions: the original text fragments with their marks
+            deletedFragments?: DeletedFragment[];
           }
 
           const pendingChanges: PendingChange[] = [];
@@ -177,8 +184,9 @@ export const TrackChangesMode = Extension.create<
                   oldTo = map.invert().map(oldTo, 1);
                 }
 
-                // Get the content that was deleted (from old state)
+                // Get the content that was deleted (from old state), preserving marks
                 let deletedContent = "";
+                const deletedFragments: DeletedFragment[] = [];
                 try {
                   deletedContent = oldState.doc.textBetween(
                     oldFrom,
@@ -186,6 +194,28 @@ export const TrackChangesMode = Extension.create<
                     "",
                     "",
                   );
+                  // Collect text nodes with their marks
+                  oldState.doc.nodesBetween(oldFrom, oldTo, (node, pos) => {
+                    if (node.isText && node.text) {
+                      // Calculate the portion of this text node that's within our range
+                      const nodeStart = pos;
+                      const nodeEnd = pos + node.nodeSize;
+                      const overlapStart = Math.max(nodeStart, oldFrom);
+                      const overlapEnd = Math.min(nodeEnd, oldTo);
+
+                      if (overlapStart < overlapEnd) {
+                        const textStart = overlapStart - nodeStart;
+                        const textEnd = overlapEnd - nodeStart;
+                        const text = node.text.slice(textStart, textEnd);
+                        if (text) {
+                          deletedFragments.push({
+                            text,
+                            marks: node.marks,
+                          });
+                        }
+                      }
+                    }
+                  });
                 } catch {
                   // Position out of bounds, skip
                 }
@@ -222,6 +252,10 @@ export const TrackChangesMode = Extension.create<
                     from: mappedFrom,
                     to: mappedFrom,
                     text: deletedContent,
+                    deletedFragments:
+                      deletedFragments.length > 0
+                        ? deletedFragments
+                        : undefined,
                   });
                 }
 
@@ -283,12 +317,29 @@ export const TrackChangesMode = Extension.create<
                 date: date,
               });
 
-              const textNode = newState.schema.text(change.text, [
-                deletionMark,
-              ]);
-
               const mappedPos = tr.mapping.map(change.from);
-              tr = tr.insert(mappedPos, textNode);
+
+              // If we have fragments with original marks, preserve them
+              if (
+                change.deletedFragments &&
+                change.deletedFragments.length > 0
+              ) {
+                // Insert each fragment with its original marks plus the deletion mark
+                // Insert in reverse order since we're inserting at the same position
+                const fragments = [...change.deletedFragments].reverse();
+                for (const fragment of fragments) {
+                  // Combine original marks with deletion mark
+                  const marks = [...fragment.marks, deletionMark];
+                  const textNode = newState.schema.text(fragment.text, marks);
+                  tr = tr.insert(mappedPos, textNode);
+                }
+              } else {
+                // Fallback: just insert with deletion mark only
+                const textNode = newState.schema.text(change.text, [
+                  deletionMark,
+                ]);
+                tr = tr.insert(mappedPos, textNode);
+              }
 
               // Don't let cursor move - it should stay to the LEFT of inserted deleted text
               // The insert pushes everything right, so we need to keep cursor at mappedPos
