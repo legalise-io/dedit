@@ -85,12 +85,13 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       Insertion,
       Deletion,
       Comment,
+      // History must come before TrackChangesMode so undo/redo works correctly
+      History.configure({
+        depth: 100,
+      }),
       TrackChangesMode.configure({
         enabled: trackChangesEnabled,
         author: trackChangesAuthor,
-      }),
-      History.configure({
-        depth: 100,
       }),
       SearchAndReplace.configure({
         searchResultClass: "search-result",

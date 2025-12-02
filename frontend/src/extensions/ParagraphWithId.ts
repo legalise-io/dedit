@@ -154,6 +154,7 @@ export const ParagraphWithId = Paragraph.extend<ParagraphWithIdOptions>({
       `[ParagraphWithId] onCreate assigned ${count} IDs, modified=${modified}`,
     );
     if (modified) {
+      tr.setMeta("addToHistory", false);
       this.editor.view.dispatch(tr);
     }
     this.storage.isAssigningIds = false;
@@ -211,6 +212,7 @@ export const ParagraphWithId = Paragraph.extend<ParagraphWithIdOptions>({
         `[ParagraphWithId] onUpdate setTimeout assigned ${count} IDs`,
       );
       if (modified) {
+        tr.setMeta("addToHistory", false);
         editor.view.dispatch(tr);
       }
       storage.isAssigningIds = false;
