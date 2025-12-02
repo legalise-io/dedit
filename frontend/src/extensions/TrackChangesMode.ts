@@ -191,11 +191,24 @@ export const TrackChangesMode = Extension.create<
                   deletedContent = oldState.doc.textBetween(
                     oldFrom,
                     oldTo,
-                    "",
+                    "\n",
                     "",
                   );
-                  // Collect text nodes with their marks
+                  // Collect text nodes with their marks, including paragraph breaks
+                  let isFirstBlock = true;
                   oldState.doc.nodesBetween(oldFrom, oldTo, (node, pos) => {
+                    // Add a newline fragment between block nodes (paragraphs, headings, etc.)
+                    if (node.isBlock && node.isTextblock) {
+                      if (!isFirstBlock) {
+                        // Add newline before this block (except the first one)
+                        deletedFragments.push({
+                          text: "\n",
+                          marks: [],
+                        });
+                      }
+                      isFirstBlock = false;
+                    }
+
                     if (node.isText && node.text) {
                       // Calculate the portion of this text node that's within our range
                       const nodeStart = pos;
