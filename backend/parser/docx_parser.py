@@ -436,12 +436,25 @@ def parse_paragraph(
 def parse_table(
     table, numbering_tracker: Optional[NumberingTracker] = None
 ) -> Table:
-    """Parse a python-docx table into our intermediate format."""
+    """Parse a python-docx table into our intermediate format.
+
+    Note: python-docx's row.cells returns the same cell object multiple times
+    for horizontally merged cells (colspan). We track cell identity to avoid
+    duplicating content.
+    """
     parsed_table = Table()
 
     for row in table.rows:
         parsed_row = TableRow()
+        seen_cells = set()  # Track cell objects by id to handle merged cells
+
         for cell in row.cells:
+            # Skip duplicate cell objects (horizontally merged cells)
+            cell_id = id(cell)
+            if cell_id in seen_cells:
+                continue
+            seen_cells.add(cell_id)
+
             parsed_cell = TableCell()
 
             # Parse cell content - cells can contain paragraphs and nested tables
