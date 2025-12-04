@@ -12,12 +12,14 @@ Supports:
 - Comments via python-docx native API
 """
 
+import base64
 from io import BytesIO
 from typing import Any, Optional
 
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from lxml import etree
 
 # Global counter for revision IDs
 _revision_id_counter = 0
@@ -193,10 +195,232 @@ def process_heading(
                 )
 
 
+def _base64_to_element(b64_string: str):
+    """Deserialize a base64-encoded XML string to an lxml element."""
+    if not b64_string:
+        return None
+    xml_bytes = base64.b64decode(b64_string.encode("ascii"))
+    return etree.fromstring(xml_bytes)
+
+
+def _restore_raw_cell_properties(cell, raw_xml: str) -> None:
+    """Restore raw tcPr element from base64-encoded XML."""
+    if not raw_xml:
+        return
+
+    tc = cell._tc
+    new_tcPr = _base64_to_element(raw_xml)
+    if new_tcPr is None:
+        return
+
+    # Remove existing tcPr if present
+    existing_tcPr = tc.find(qn("w:tcPr"))
+    if existing_tcPr is not None:
+        tc.remove(existing_tcPr)
+
+    # Insert new tcPr at the beginning (it should be first child)
+    tc.insert(0, new_tcPr)
+
+
+def _restore_raw_row_properties(row, raw_xml: str) -> None:
+    """Restore raw trPr element from base64-encoded XML."""
+    if not raw_xml:
+        return
+
+    tr = row._tr
+    new_trPr = _base64_to_element(raw_xml)
+    if new_trPr is None:
+        return
+
+    # Remove existing trPr if present
+    existing_trPr = tr.find(qn("w:trPr"))
+    if existing_trPr is not None:
+        tr.remove(existing_trPr)
+
+    # Insert new trPr at the beginning (it should be first child)
+    tr.insert(0, new_trPr)
+
+
+def _restore_raw_table_properties(
+    table, raw_tblPr: str, raw_tblGrid: str
+) -> None:
+    """Restore raw tblPr and tblGrid elements from base64-encoded XML."""
+    tbl = table._tbl
+
+    # Restore tblPr
+    if raw_tblPr:
+        new_tblPr = _base64_to_element(raw_tblPr)
+        if new_tblPr is not None:
+            existing_tblPr = tbl.find(qn("w:tblPr"))
+            if existing_tblPr is not None:
+                tbl.remove(existing_tblPr)
+            # tblPr should be first child
+            tbl.insert(0, new_tblPr)
+
+    # Restore tblGrid
+    if raw_tblGrid:
+        new_tblGrid = _base64_to_element(raw_tblGrid)
+        if new_tblGrid is not None:
+            existing_tblGrid = tbl.find(qn("w:tblGrid"))
+            if existing_tblGrid is not None:
+                tbl.remove(existing_tblGrid)
+            # tblGrid should be after tblPr
+            # Find the insert position (after tblPr if present)
+            tblPr = tbl.find(qn("w:tblPr"))
+            if tblPr is not None:
+                tblPr_idx = list(tbl).index(tblPr)
+                tbl.insert(tblPr_idx + 1, new_tblGrid)
+            else:
+                tbl.insert(0, new_tblGrid)
+
+
+def _cleanup_merged_cells(table) -> None:
+    """
+    Remove extra tc elements that python-docx leaves behind after merging.
+
+    When python-docx merges cells horizontally, it sets gridSpan on the first cell
+    but leaves the subsequent cells. We need to remove cells that push the total
+    grid span beyond the table's column count.
+
+    For vertical merges (vMerge), we keep the continuation cells as they're needed
+    for the vertical merge structure.
+    """
+    tbl = table._tbl
+
+    # Get the number of grid columns from tblGrid
+    tblGrid = tbl.tblGrid
+    if tblGrid is None:
+        return
+    num_grid_cols = len(tblGrid.findall(qn("w:gridCol")))
+    if num_grid_cols == 0:
+        return
+
+    for row in table.rows:
+        tr = row._tr
+        tc_list = list(tr.tc_lst)
+
+        # Track grid position and find cells to remove
+        grid_pos = 0
+        cells_to_remove = []
+
+        for tc in tc_list:
+            tcPr = tc.find(qn("w:tcPr"))
+
+            # Get gridSpan (horizontal span)
+            gridSpan = 1
+            if tcPr is not None:
+                gs = tcPr.find(qn("w:gridSpan"))
+                if gs is not None:
+                    try:
+                        gridSpan = int(gs.get(qn("w:val")))
+                    except (ValueError, TypeError):
+                        gridSpan = 1
+
+            # If this cell would start beyond the grid, it's an artifact
+            if grid_pos >= num_grid_cols:
+                cells_to_remove.append(tc)
+            else:
+                grid_pos += gridSpan
+
+        # Remove artifact cells from the row
+        for tc in cells_to_remove:
+            tr.remove(tc)
+
+
+def _apply_cell_style(cell, attrs: dict) -> None:
+    """Apply styling to a table cell from TipTap attributes."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+
+    # Background color
+    bg_color = attrs.get("backgroundColor")
+    if bg_color:
+        # Remove # prefix if present
+        color = bg_color.lstrip("#")
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:fill"), color)
+        tcPr.append(shd)
+
+    # Vertical alignment
+    v_align = attrs.get("verticalAlign")
+    if v_align:
+        vAlign = OxmlElement("w:vAlign")
+        vAlign.set(qn("w:val"), v_align)
+        tcPr.append(vAlign)
+
+    # Cell width
+    colwidth = attrs.get("colwidth")
+    if colwidth and len(colwidth) > 0:
+        tcW = OxmlElement("w:tcW")
+        tcW.set(qn("w:w"), str(colwidth[0]))
+        tcW.set(qn("w:type"), "dxa")
+        # Remove existing tcW if present
+        existing_tcW = tcPr.find(qn("w:tcW"))
+        if existing_tcW is not None:
+            tcPr.remove(existing_tcW)
+        tcPr.insert(0, tcW)  # tcW should be first
+
+    # Borders
+    borders = attrs.get("borders")
+    if borders:
+        tcBorders = OxmlElement("w:tcBorders")
+        for side in ["top", "bottom", "left", "right"]:
+            border_data = borders.get(side)
+            if border_data:
+                border_elem = OxmlElement(f"w:{side}")
+                if border_data.get("style"):
+                    border_elem.set(qn("w:val"), border_data["style"])
+                if border_data.get("width"):
+                    border_elem.set(qn("w:sz"), str(border_data["width"]))
+                if border_data.get("color"):
+                    border_elem.set(qn("w:color"), border_data["color"])
+                tcBorders.append(border_elem)
+        tcPr.append(tcBorders)
+
+    # Text alignment (applied to first paragraph)
+    text_align = attrs.get("textAlign")
+    if text_align and cell.paragraphs:
+        para = cell.paragraphs[0]
+        pPr = para._p.get_or_add_pPr()
+        jc = OxmlElement("w:jc")
+        jc.set(qn("w:val"), text_align)
+        pPr.append(jc)
+
+
+def _apply_table_style(table, table_attrs: dict) -> None:
+    """Apply styling to a table from TipTap attributes."""
+    tbl = table._tbl
+
+    # Table alignment
+    alignment = table_attrs.get("alignment")
+    if alignment:
+        from docx.enum.table import WD_TABLE_ALIGNMENT
+
+        alignment_map = {
+            "left": WD_TABLE_ALIGNMENT.LEFT,
+            "center": WD_TABLE_ALIGNMENT.CENTER,
+            "right": WD_TABLE_ALIGNMENT.RIGHT,
+        }
+        if alignment in alignment_map:
+            table.alignment = alignment_map[alignment]
+
+    # Column widths
+    colwidths = table_attrs.get("colwidths")
+    if colwidths:
+        # Set column widths via tblGrid
+        tblGrid = tbl.tblGrid
+        if tblGrid is not None:
+            gridCols = tblGrid.findall(qn("w:gridCol"))
+            for i, width in enumerate(colwidths):
+                if i < len(gridCols):
+                    gridCols[i].set(qn("w:w"), str(width))
+
+
 def process_table(
     doc: Document, node: dict, comments_dict: dict, comment_runs_map: dict
 ) -> None:
-    """Process a table node with support for merged cells (colspan/rowspan)."""
+    """Process a table node with support for merged cells (colspan/rowspan) and styling."""
     rows_data = node.get("content", [])
     if not rows_data:
         return
@@ -215,14 +439,37 @@ def process_table(
         return
 
     table = doc.add_table(rows=num_rows, cols=num_cols)
-    # Try to apply Table Grid style, fall back gracefully if not available
-    try:
-        table.style = "Table Grid"
-    except KeyError:
-        try:
-            table.style = "TableGrid"
-        except KeyError:
-            pass  # Use default table style
+
+    # Get table-level attributes
+    table_attrs = node.get("attrs", {})
+
+    # Check if we have raw XML to restore (lossless round-trip)
+    raw_tblPr = table_attrs.get("rawTblPr")
+    raw_tblGrid = table_attrs.get("rawTblGrid")
+
+    if raw_tblPr or raw_tblGrid:
+        # Restore raw table properties for exact style preservation
+        _restore_raw_table_properties(table, raw_tblPr, raw_tblGrid)
+    else:
+        # Fall back to individual style attributes
+        style_name = table_attrs.get("styleName")
+        if style_name:
+            try:
+                table.style = style_name
+            except KeyError:
+                pass  # Style not found, use default
+        else:
+            # Try to apply Table Grid style as default
+            try:
+                table.style = "Table Grid"
+            except KeyError:
+                try:
+                    table.style = "TableGrid"
+                except KeyError:
+                    pass  # Use default table style
+
+        # Apply table alignment and column widths
+        _apply_table_style(table, table_attrs)
 
     # Track which cells are covered by merges (row_idx, col_idx) -> True
     covered_cells: set[tuple[int, int]] = set()
@@ -233,6 +480,12 @@ def process_table(
     for row_idx, row_node in enumerate(rows_data):
         cells_data = row_node.get("content", [])
         grid_col = 0  # Current position in the grid
+
+        # Restore raw row properties if present
+        row_attrs = row_node.get("attrs", {})
+        raw_row_xml = row_attrs.get("rawXml")
+        if raw_row_xml:
+            _restore_raw_row_properties(table.rows[row_idx], raw_row_xml)
 
         for cell_node in cells_data:
             # Skip grid positions that are covered by previous merges
@@ -255,6 +508,13 @@ def process_table(
             _fill_cell_content(
                 doc, cell, cell_content, comments_dict, comment_runs_map
             )
+
+            # Apply cell styling - prefer raw XML for lossless round-trip
+            raw_cell_xml = attrs.get("rawXml")
+            if raw_cell_xml:
+                _restore_raw_cell_properties(cell, raw_cell_xml)
+            else:
+                _apply_cell_style(cell, attrs)
 
             # Mark covered cells and prepare merge if needed
             if colspan > 1 or rowspan > 1:
@@ -280,6 +540,10 @@ def process_table(
             start_cell.merge(end_cell)
         except Exception:
             pass  # Skip invalid merges gracefully
+
+    # Clean up: remove extra tc elements that are artifacts of python-docx merge
+    # When raw XML is restored, we need the table structure to match exactly
+    _cleanup_merged_cells(table)
 
 
 def _fill_cell_content(

@@ -10,6 +10,7 @@ Handles:
 - Comments
 """
 
+import base64
 import uuid
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -17,6 +18,7 @@ from typing import Optional
 
 from docx import Document
 from docx.oxml.ns import qn
+from lxml import etree
 
 from .comments_parser import (
     comments_to_dict,
@@ -52,6 +54,45 @@ class Paragraph:
 
 
 @dataclass
+class BorderStyle:
+    """Border styling for a single edge."""
+
+    style: Optional[str] = None  # single, double, dashed, dotted, nil, etc.
+    width: Optional[int] = None  # Width in eighths of a point
+    color: Optional[str] = None  # Hex color (e.g., "000000")
+
+
+@dataclass
+class CellBorders:
+    """Border styles for all edges of a cell."""
+
+    top: Optional[BorderStyle] = None
+    bottom: Optional[BorderStyle] = None
+    left: Optional[BorderStyle] = None
+    right: Optional[BorderStyle] = None
+
+
+@dataclass
+class CellStyle:
+    """Styling properties for a table cell."""
+
+    width: Optional[int] = None  # Width in twips (1/1440 inch)
+    background_color: Optional[str] = None  # Hex color (e.g., "f0f0f0")
+    vertical_align: Optional[str] = None  # top, center, bottom
+    borders: Optional[CellBorders] = None
+    text_align: Optional[str] = None  # left, center, right, both (justify)
+
+
+@dataclass
+class TableStyle:
+    """Styling properties for a table."""
+
+    style_name: Optional[str] = None  # Named style (e.g., "Table Grid")
+    alignment: Optional[str] = None  # left, center, right
+    column_widths: list[int] = field(default_factory=list)  # Widths in twips
+
+
+@dataclass
 class TableCell:
     """A table cell containing block content."""
 
@@ -60,6 +101,9 @@ class TableCell:
     )  # List of Paragraph or nested Table
     colspan: int = 1  # Number of columns this cell spans
     rowspan: int = 1  # Number of rows this cell spans
+    style: Optional[CellStyle] = None
+    # Raw OOXML for cell properties (tcPr) - preserves all styling
+    raw_xml: Optional[str] = None
 
 
 @dataclass
@@ -67,6 +111,8 @@ class TableRow:
     """A table row containing cells."""
 
     cells: list[TableCell] = field(default_factory=list)
+    # Raw OOXML for row properties (trPr) - preserves row height, header row, etc.
+    raw_xml: Optional[str] = None
 
 
 @dataclass
@@ -75,6 +121,10 @@ class Table:
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     rows: list[TableRow] = field(default_factory=list)
+    style: Optional[TableStyle] = None
+    # Raw OOXML for table properties (tblPr) and grid (tblGrid)
+    raw_tblPr: Optional[str] = None
+    raw_tblGrid: Optional[str] = None
 
 
 @dataclass
@@ -435,6 +485,139 @@ def parse_paragraph(
     )
 
 
+def _element_to_base64(element) -> Optional[str]:
+    """Serialize an lxml element to base64-encoded XML string."""
+    if element is None:
+        return None
+    xml_bytes = etree.tostring(element, encoding="unicode")
+    return base64.b64encode(xml_bytes.encode("utf-8")).decode("ascii")
+
+
+def _base64_to_element(b64_string: str):
+    """Deserialize a base64-encoded XML string to an lxml element."""
+    if not b64_string:
+        return None
+    xml_bytes = base64.b64decode(b64_string.encode("ascii"))
+    return etree.fromstring(xml_bytes)
+
+
+def _parse_border_style(border_elem) -> Optional[BorderStyle]:
+    """Parse a border element into a BorderStyle."""
+    if border_elem is None:
+        return None
+
+    style = border_elem.get(qn("w:val"))
+    if style == "nil":
+        return None
+
+    width_str = border_elem.get(qn("w:sz"))
+    width = int(width_str) if width_str else None
+    color = border_elem.get(qn("w:color"))
+
+    return BorderStyle(style=style, width=width, color=color)
+
+
+def _parse_cell_borders(tcPr) -> Optional[CellBorders]:
+    """Parse cell borders from tcPr element."""
+    if tcPr is None:
+        return None
+
+    tcBorders = tcPr.find(qn("w:tcBorders"))
+    if tcBorders is None:
+        return None
+
+    top = _parse_border_style(tcBorders.find(qn("w:top")))
+    bottom = _parse_border_style(tcBorders.find(qn("w:bottom")))
+    left = _parse_border_style(tcBorders.find(qn("w:left")))
+    right = _parse_border_style(tcBorders.find(qn("w:right")))
+
+    if not any([top, bottom, left, right]):
+        return None
+
+    return CellBorders(top=top, bottom=bottom, left=left, right=right)
+
+
+def _parse_cell_style(tc, cell) -> Optional[CellStyle]:
+    """Parse cell styling from tc element."""
+    tcPr = tc.tcPr
+    if tcPr is None:
+        return None
+
+    style = CellStyle()
+    has_style = False
+
+    # Width
+    tcW = tcPr.find(qn("w:tcW"))
+    if tcW is not None:
+        w = tcW.get(qn("w:w"))
+        if w:
+            style.width = int(w)
+            has_style = True
+
+    # Background color (shading)
+    shd = tcPr.find(qn("w:shd"))
+    if shd is not None:
+        fill = shd.get(qn("w:fill"))
+        if fill and fill.lower() not in ("auto", "ffffff"):
+            style.background_color = fill
+            has_style = True
+
+    # Vertical alignment
+    vAlign = tcPr.find(qn("w:vAlign"))
+    if vAlign is not None:
+        style.vertical_align = vAlign.get(qn("w:val"))
+        has_style = True
+
+    # Borders
+    borders = _parse_cell_borders(tcPr)
+    if borders:
+        style.borders = borders
+        has_style = True
+
+    # Text alignment (from first paragraph)
+    if cell.paragraphs:
+        para = cell.paragraphs[0]
+        pPr = para._p.pPr
+        if pPr is not None:
+            jc = pPr.find(qn("w:jc"))
+            if jc is not None:
+                style.text_align = jc.get(qn("w:val"))
+                has_style = True
+
+    return style if has_style else None
+
+
+def _parse_table_style(table) -> Optional[TableStyle]:
+    """Parse table-level styling."""
+    tbl = table._tbl
+    style = TableStyle()
+    has_style = False
+
+    # Table style name
+    if table.style and table.style.name:
+        style.style_name = table.style.name
+        has_style = True
+
+    # Table alignment
+    if table.alignment is not None:
+        # Convert enum to string
+        alignment_map = {0: "left", 1: "center", 2: "right"}
+        style.alignment = alignment_map.get(table.alignment, "left")
+        has_style = True
+
+    # Column widths from tblGrid
+    tblGrid = tbl.tblGrid
+    if tblGrid is not None:
+        gridCols = tblGrid.findall(qn("w:gridCol"))
+        for col in gridCols:
+            w = col.get(qn("w:w"))
+            if w:
+                style.column_widths.append(int(w))
+                has_style = True
+
+    return style if has_style else None
+
+
 def parse_table(
     table, numbering_tracker: Optional[NumberingTracker] = None
 ) -> Table:
@@ -446,6 +629,9 @@ def parse_table(
     3. Storing merge info in TableCell.colspan and TableCell.rowspan
     4. Skipping continuation cells (cells that are part of a merge but not the origin)
 
+    Also captures raw OOXML for table, row, and cell properties to enable
+    lossless round-tripping of complex styles.
+
     Note: We iterate over raw tc elements instead of row.cells because row.cells
     returns the same _Cell object for vertically merged cells, making it impossible
     to detect which rows are continuations.
@@ -454,12 +640,28 @@ def parse_table(
 
     parsed_table = Table()
 
+    # Capture raw table properties (tblPr) and grid (tblGrid)
+    tbl = table._tbl
+    tblPr = tbl.find(qn("w:tblPr"))
+    tblGrid = tbl.find(qn("w:tblGrid"))
+    parsed_table.raw_tblPr = _element_to_base64(tblPr)
+    parsed_table.raw_tblGrid = _element_to_base64(tblGrid)
+
+    # Parse table-level styles (for backward compatibility)
+    parsed_table.style = _parse_table_style(table)
+
     # Track vertical merges: grid_col -> {"cell": TableCell, "rowspan": int}
     # This helps us calculate rowspan and skip continuation cells
     vmerge_tracking: dict[int, dict] = {}
 
     for row_idx, row in enumerate(table.rows):
         parsed_row = TableRow()
+
+        # Capture raw row properties (trPr)
+        tr = row._tr
+        trPr = tr.find(qn("w:trPr"))
+        parsed_row.raw_xml = _element_to_base64(trPr)
+
         grid_col = 0  # Track position in the grid
 
         # Iterate over raw tc elements to properly detect vMerge
@@ -481,6 +683,10 @@ def parse_table(
             # This is either a new cell or the start of a vertical merge
             parsed_cell = TableCell(colspan=colspan, rowspan=1)
 
+            # Capture raw cell properties (tcPr)
+            tcPr = tc.find(qn("w:tcPr"))
+            parsed_cell.raw_xml = _element_to_base64(tcPr)
+
             # If there was a previous vertical merge in this column, finalize its rowspan
             if grid_col in vmerge_tracking:
                 prev_info = vmerge_tracking[grid_col]
@@ -493,6 +699,9 @@ def parse_table(
 
             # Create a _Cell wrapper to access paragraphs and tables
             cell = _Cell(tc, table)
+
+            # Parse cell styling
+            parsed_cell.style = _parse_cell_style(tc, cell)
 
             # Parse cell content - cells can contain paragraphs and nested tables
             for para in cell.paragraphs:
@@ -564,6 +773,67 @@ def parse_docx(file_content: bytes) -> tuple[list, dict]:
     return elements, comments
 
 
+def _border_style_to_dict(border: Optional[BorderStyle]) -> Optional[dict]:
+    """Convert BorderStyle to dict."""
+    if border is None:
+        return None
+    return {
+        "style": border.style,
+        "width": border.width,
+        "color": border.color,
+    }
+
+
+def _cell_borders_to_dict(borders: Optional[CellBorders]) -> Optional[dict]:
+    """Convert CellBorders to dict."""
+    if borders is None:
+        return None
+    result = {}
+    if borders.top:
+        result["top"] = _border_style_to_dict(borders.top)
+    if borders.bottom:
+        result["bottom"] = _border_style_to_dict(borders.bottom)
+    if borders.left:
+        result["left"] = _border_style_to_dict(borders.left)
+    if borders.right:
+        result["right"] = _border_style_to_dict(borders.right)
+    return result if result else None
+
+
+def _cell_style_to_dict(style: Optional[CellStyle]) -> Optional[dict]:
+    """Convert CellStyle to dict."""
+    if style is None:
+        return None
+    result = {}
+    if style.width is not None:
+        result["width"] = style.width
+    if style.background_color:
+        result["backgroundColor"] = style.background_color
+    if style.vertical_align:
+        result["verticalAlign"] = style.vertical_align
+    if style.borders:
+        borders = _cell_borders_to_dict(style.borders)
+        if borders:
+            result["borders"] = borders
+    if style.text_align:
+        result["textAlign"] = style.text_align
+    return result if result else None
+
+
+def _table_style_to_dict(style: Optional[TableStyle]) -> Optional[dict]:
+    """Convert TableStyle to dict."""
+    if style is None:
+        return None
+    result = {}
+    if style.style_name:
+        result["styleName"] = style.style_name
+    if style.alignment:
+        result["alignment"] = style.alignment
+    if style.column_widths:
+        result["columnWidths"] = style.column_widths
+    return result if result else None
+
+
 def elements_to_dict(elements: list) -> list[dict]:
     """Convert parsed elements to JSON-serializable dictionaries."""
     result = []
@@ -589,25 +859,47 @@ def elements_to_dict(elements: list) -> list[dict]:
                 }
             )
         elif isinstance(elem, Table):
-            result.append(
-                {
-                    "type": "table",
-                    "id": elem.id,
-                    "rows": [
+            # Build rows with raw XML preservation
+            rows_data = []
+            for row in elem.rows:
+                row_dict = {
+                    "cells": [
                         {
-                            "cells": [
-                                {
-                                    "content": elements_to_dict(cell.content),
-                                    "colspan": cell.colspan,
-                                    "rowspan": cell.rowspan,
-                                }
-                                for cell in row.cells
-                            ]
+                            "content": elements_to_dict(cell.content),
+                            "colspan": cell.colspan,
+                            "rowspan": cell.rowspan,
+                            **(
+                                {"style": _cell_style_to_dict(cell.style)}
+                                if cell.style
+                                else {}
+                            ),
+                            **(
+                                {"rawXml": cell.raw_xml} if cell.raw_xml else {}
+                            ),
                         }
-                        for row in elem.rows
-                    ],
+                        for cell in row.cells
+                    ]
                 }
-            )
+                # Add raw row XML if present
+                if row.raw_xml:
+                    row_dict["rawXml"] = row.raw_xml
+                rows_data.append(row_dict)
+
+            table_dict = {
+                "type": "table",
+                "id": elem.id,
+                "rows": rows_data,
+            }
+            if elem.style:
+                style_dict = _table_style_to_dict(elem.style)
+                if style_dict:
+                    table_dict["style"] = style_dict
+            # Add raw table XML if present
+            if elem.raw_tblPr:
+                table_dict["rawTblPr"] = elem.raw_tblPr
+            if elem.raw_tblGrid:
+                table_dict["rawTblGrid"] = elem.raw_tblGrid
+            result.append(table_dict)
         elif isinstance(elem, Section):
             result.append(
                 {

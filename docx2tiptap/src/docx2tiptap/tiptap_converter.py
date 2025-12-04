@@ -97,6 +97,52 @@ def paragraph_to_tiptap(para: Paragraph) -> dict:
     }
 
 
+def _cell_style_to_tiptap_attrs(style) -> dict:
+    """Convert CellStyle to TipTap cell attributes."""
+    attrs = {}
+    if style is None:
+        return attrs
+
+    if style.width is not None:
+        attrs["colwidth"] = [style.width]  # TipTap uses colwidth array
+    if style.background_color:
+        attrs["backgroundColor"] = f"#{style.background_color}"
+    if style.vertical_align:
+        attrs["verticalAlign"] = style.vertical_align
+    if style.text_align:
+        attrs["textAlign"] = style.text_align
+    if style.borders:
+        borders = {}
+        if style.borders.top:
+            borders["top"] = {
+                "style": style.borders.top.style,
+                "width": style.borders.top.width,
+                "color": style.borders.top.color,
+            }
+        if style.borders.bottom:
+            borders["bottom"] = {
+                "style": style.borders.bottom.style,
+                "width": style.borders.bottom.width,
+                "color": style.borders.bottom.color,
+            }
+        if style.borders.left:
+            borders["left"] = {
+                "style": style.borders.left.style,
+                "width": style.borders.left.width,
+                "color": style.borders.left.color,
+            }
+        if style.borders.right:
+            borders["right"] = {
+                "style": style.borders.right.style,
+                "width": style.borders.right.width,
+                "color": style.borders.right.color,
+            }
+        if borders:
+            attrs["borders"] = borders
+
+    return attrs
+
+
 def table_to_tiptap(table: Table) -> dict:
     """Convert a Table to Tiptap table nodes."""
     rows = []
@@ -143,14 +189,44 @@ def table_to_tiptap(table: Table) -> dict:
                 attrs["colspan"] = cell.colspan
             if cell.rowspan > 1:
                 attrs["rowspan"] = cell.rowspan
+
+            # Add style attributes
+            if cell.style:
+                style_attrs = _cell_style_to_tiptap_attrs(cell.style)
+                attrs.update(style_attrs)
+
+            # Add raw XML for lossless round-tripping
+            if cell.raw_xml:
+                attrs["rawXml"] = cell.raw_xml
+
             if attrs:
                 cell_node["attrs"] = attrs
 
             cells.append(cell_node)
 
-        rows.append({"type": "tableRow", "content": cells})
+        # Build row with optional raw XML
+        row_node = {"type": "tableRow", "content": cells}
+        if row.raw_xml:
+            row_node["attrs"] = {"rawXml": row.raw_xml}
+        rows.append(row_node)
 
-    return {"type": "table", "attrs": {"id": table.id}, "content": rows}
+    # Build table attributes
+    table_attrs = {"id": table.id}
+    if table.style:
+        if table.style.column_widths:
+            table_attrs["colwidths"] = table.style.column_widths
+        if table.style.alignment:
+            table_attrs["alignment"] = table.style.alignment
+        if table.style.style_name:
+            table_attrs["styleName"] = table.style.style_name
+
+    # Add raw table XML for lossless round-tripping
+    if table.raw_tblPr:
+        table_attrs["rawTblPr"] = table.raw_tblPr
+    if table.raw_tblGrid:
+        table_attrs["rawTblGrid"] = table.raw_tblGrid
+
+    return {"type": "table", "attrs": table_attrs, "content": rows}
 
 
 def convert_dict_element(elem: dict) -> dict:
@@ -256,16 +332,58 @@ def convert_dict_element(elem: dict) -> dict:
                     attrs["colspan"] = cell["colspan"]
                 if cell.get("rowspan", 1) > 1:
                     attrs["rowspan"] = cell["rowspan"]
+
+                # Add cell style attributes
+                cell_style = cell.get("style")
+                if cell_style:
+                    if cell_style.get("width") is not None:
+                        attrs["colwidth"] = [cell_style["width"]]
+                    if cell_style.get("backgroundColor"):
+                        attrs["backgroundColor"] = (
+                            f"#{cell_style['backgroundColor']}"
+                        )
+                    if cell_style.get("verticalAlign"):
+                        attrs["verticalAlign"] = cell_style["verticalAlign"]
+                    if cell_style.get("textAlign"):
+                        attrs["textAlign"] = cell_style["textAlign"]
+                    if cell_style.get("borders"):
+                        attrs["borders"] = cell_style["borders"]
+
+                # Add raw XML for lossless round-tripping
+                if cell.get("rawXml"):
+                    attrs["rawXml"] = cell["rawXml"]
+
                 if attrs:
                     cell_node["attrs"] = attrs
 
                 cells.append(cell_node)
 
-            rows.append({"type": "tableRow", "content": cells})
+            # Build row with optional raw XML
+            row_node = {"type": "tableRow", "content": cells}
+            if row.get("rawXml"):
+                row_node["attrs"] = {"rawXml": row["rawXml"]}
+            rows.append(row_node)
+
+        # Build table attributes
+        table_attrs = {"id": elem.get("id", str(uuid.uuid4()))}
+        table_style = elem.get("style")
+        if table_style:
+            if table_style.get("columnWidths"):
+                table_attrs["colwidths"] = table_style["columnWidths"]
+            if table_style.get("alignment"):
+                table_attrs["alignment"] = table_style["alignment"]
+            if table_style.get("styleName"):
+                table_attrs["styleName"] = table_style["styleName"]
+
+        # Add raw table XML for lossless round-tripping
+        if elem.get("rawTblPr"):
+            table_attrs["rawTblPr"] = elem["rawTblPr"]
+        if elem.get("rawTblGrid"):
+            table_attrs["rawTblGrid"] = elem["rawTblGrid"]
 
         return {
             "type": "table",
-            "attrs": {"id": elem.get("id", str(uuid.uuid4()))},
+            "attrs": table_attrs,
             "content": rows,
         }
 
