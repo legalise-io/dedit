@@ -185,15 +185,8 @@ export const TrackChangesMode = Extension.create<
                 }
 
                 // Get the content that was deleted (from old state), preserving marks
-                let deletedContent = "";
                 const deletedFragments: DeletedFragment[] = [];
                 try {
-                  deletedContent = oldState.doc.textBetween(
-                    oldFrom,
-                    oldTo,
-                    "\n",
-                    "",
-                  );
                   // Collect text nodes with their marks, including paragraph breaks
                   let isFirstBlock = true;
                   oldState.doc.nodesBetween(oldFrom, oldTo, (node, pos) => {
@@ -221,10 +214,17 @@ export const TrackChangesMode = Extension.create<
                         const textEnd = overlapEnd - nodeStart;
                         const text = node.text.slice(textStart, textEnd);
                         if (text) {
-                          deletedFragments.push({
-                            text,
-                            marks: node.marks,
-                          });
+                          // Check if this text has an insertion mark
+                          // If so, skip it - deleting inserted text should just remove it
+                          const hasInsertionMark = node.marks.some(
+                            (m) => m.type.name === "insertion",
+                          );
+                          if (!hasInsertionMark) {
+                            deletedFragments.push({
+                              text,
+                              marks: node.marks,
+                            });
+                          }
                         }
                       }
                     }
@@ -256,20 +256,24 @@ export const TrackChangesMode = Extension.create<
                   mappedFrom = map.map(mappedFrom);
                 }
 
-                if (deletedContent && deletedContent.length > 0) {
-                  // For deletions, insert the deleted text at the position where deletion started
-                  // This is 'from' mapped through subsequent steps (not including current step,
-                  // since the deletion step doesn't change the 'from' position)
-                  pendingChanges.push({
-                    type: "deletion",
-                    from: mappedFrom,
-                    to: mappedFrom,
-                    text: deletedContent,
-                    deletedFragments:
-                      deletedFragments.length > 0
-                        ? deletedFragments
-                        : undefined,
-                  });
+                // Only create a deletion if there are non-insertion fragments to delete
+                // (text that was inserted and then deleted should just disappear)
+                if (deletedFragments.length > 0) {
+                  const nonInsertedText = deletedFragments
+                    .map((f) => f.text)
+                    .join("");
+                  if (nonInsertedText.length > 0) {
+                    // For deletions, insert the deleted text at the position where deletion started
+                    // This is 'from' mapped through subsequent steps (not including current step,
+                    // since the deletion step doesn't change the 'from' position)
+                    pendingChanges.push({
+                      type: "deletion",
+                      from: mappedFrom,
+                      to: mappedFrom,
+                      text: nonInsertedText,
+                      deletedFragments: deletedFragments,
+                    });
+                  }
                 }
 
                 if (insertedText && insertedText.length > 0) {
