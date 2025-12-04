@@ -40,129 +40,6 @@ app.add_middleware(
 documents: dict[str, dict] = {}
 # Storage for custom templates
 templates: dict[str, bytes] = {}
-# Storage for raw OOXML styling data (indexed by document_id -> element_id -> raw data)
-raw_styles: dict[str, dict] = {}
-
-
-def extract_raw_styles(tiptap_doc: dict) -> dict:
-    """
-    Extract raw OOXML styling data from TipTap document and return it separately.
-
-    This removes rawXml, rawTblPr, rawTblGrid attributes from the TipTap doc
-    and returns them indexed by element IDs for later restoration during export.
-
-    Also removes colwidth/colwidths attributes since:
-    1. They are in twips (1/1440 inch) which TipTap interprets as pixels
-    2. The raw XML already contains proper width info for export
-    """
-    styles = {}
-
-    def process_node(node: dict):
-        if node.get("type") == "table":
-            attrs = node.get("attrs", {})
-            table_id = attrs.get("id")
-            if table_id:
-                table_styles = {}
-                # Extract table-level raw XML
-                if "rawTblPr" in attrs:
-                    table_styles["rawTblPr"] = attrs.pop("rawTblPr")
-                if "rawTblGrid" in attrs:
-                    table_styles["rawTblGrid"] = attrs.pop("rawTblGrid")
-
-                # Process rows
-                row_styles = {}
-                for row_idx, row in enumerate(node.get("content", [])):
-                    row_attrs = row.get("attrs", {})
-                    if "rawXml" in row_attrs:
-                        row_styles[row_idx] = {
-                            "rawXml": row_attrs.pop("rawXml")
-                        }
-
-                    # Process cells
-                    cell_styles = {}
-                    for cell_idx, cell in enumerate(row.get("content", [])):
-                        cell_attrs = cell.get("attrs", {})
-                        if "rawXml" in cell_attrs:
-                            cell_styles[cell_idx] = {
-                                "rawXml": cell_attrs.pop("rawXml")
-                            }
-                        # Remove width attributes - they're in twips which
-                        # TipTap interprets as pixels, causing layout issues.
-                        # The raw XML has the correct widths for export.
-                        if "colwidth" in cell_attrs:
-                            cell_attrs.pop("colwidth")
-
-                    if cell_styles:
-                        if row_idx not in row_styles:
-                            row_styles[row_idx] = {}
-                        row_styles[row_idx]["cells"] = cell_styles
-
-                if row_styles:
-                    table_styles["rows"] = row_styles
-
-                if table_styles:
-                    styles[table_id] = table_styles
-
-        # Recurse into content
-        for child in node.get("content", []):
-            if isinstance(child, dict):
-                process_node(child)
-
-    process_node(tiptap_doc)
-    return styles
-
-
-def restore_raw_styles(tiptap_doc: dict, styles: dict) -> dict:
-    """
-    Restore raw OOXML styling data back into TipTap document before export.
-
-    This merges the previously extracted raw XML back into the document
-    based on element IDs.
-    """
-    import copy
-
-    doc = copy.deepcopy(tiptap_doc)
-
-    def process_node(node: dict):
-        if node.get("type") == "table":
-            attrs = node.get("attrs", {})
-            table_id = attrs.get("id")
-            if table_id and table_id in styles:
-                table_styles = styles[table_id]
-
-                # Restore table-level raw XML
-                if "rawTblPr" in table_styles:
-                    attrs["rawTblPr"] = table_styles["rawTblPr"]
-                if "rawTblGrid" in table_styles:
-                    attrs["rawTblGrid"] = table_styles["rawTblGrid"]
-
-                # Restore row and cell styles
-                row_styles = table_styles.get("rows", {})
-                for row_idx, row in enumerate(node.get("content", [])):
-                    if row_idx in row_styles:
-                        row_style = row_styles[row_idx]
-                        if "rawXml" in row_style:
-                            if "attrs" not in row:
-                                row["attrs"] = {}
-                            row["attrs"]["rawXml"] = row_style["rawXml"]
-
-                        # Restore cell styles
-                        cell_styles = row_style.get("cells", {})
-                        for cell_idx, cell in enumerate(row.get("content", [])):
-                            if cell_idx in cell_styles:
-                                if "attrs" not in cell:
-                                    cell["attrs"] = {}
-                                cell["attrs"]["rawXml"] = cell_styles[cell_idx][
-                                    "rawXml"
-                                ]
-
-        # Recurse into content
-        for child in node.get("content", []):
-            if isinstance(child, dict):
-                process_node(child)
-
-    process_node(doc)
-    return doc
 
 
 @app.get("/")
@@ -199,16 +76,13 @@ async def upload_document(file: UploadFile):
 
         doc_id = str(uuid.uuid4())
 
-        # Extract raw OOXML styles and store them separately
-        # This data is too large/complex for the frontend to handle
-        # We'll merge it back during export
-        styles = extract_raw_styles(tiptap_doc)
-        raw_styles[doc_id] = styles
+        # Raw OOXML styles are now stored in a rawStylesStorage node
+        # within the tiptap document itself - no server-side storage needed
 
         documents[doc_id] = {
             "filename": file.filename,
             "intermediate": intermediate,
-            "tiptap": tiptap_doc,  # Now has raw XML stripped out
+            "tiptap": tiptap_doc,
             "comments": comments_list,
             "original_bytes": content,  # Store original for template use
         }
@@ -369,16 +243,10 @@ async def export_document(request: ExportRequest):
                 )
             template_bytes = templates[request.template_id]
 
-        # Restore raw OOXML styles if we have them for this document
-        tiptap_with_styles = request.tiptap
-        if request.document_id and request.document_id in raw_styles:
-            tiptap_with_styles = restore_raw_styles(
-                request.tiptap, raw_styles[request.document_id]
-            )
-
         # Convert TipTap JSON to DOCX
+        # Raw OOXML styles are restored from rawStylesStorage node by the exporter
         docx_buffer = create_docx_from_tiptap(
-            tiptap_with_styles, comments_list, template_bytes
+            request.tiptap, comments_list, template_bytes
         )
 
         # Ensure filename ends with .docx

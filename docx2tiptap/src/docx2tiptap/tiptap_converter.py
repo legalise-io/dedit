@@ -422,6 +422,57 @@ def convert_dict_element(elem: dict) -> dict:
     return {"type": "paragraph"}
 
 
+def _extract_and_store_raw_styles(content: list) -> dict | None:
+    """
+    Extract raw OOXML styles from content into a key-value store.
+
+    Removes rawTblPr, rawTblGrid, rawXml, and colwidth from nodes
+    (TipTap strips unknown attrs, colwidth in twips breaks layout).
+
+    Returns a dict to be stored in an invisible node, or None if empty.
+    """
+    styles = {}
+
+    def process_node(node: dict):
+        if node.get("type") == "table":
+            attrs = node.get("attrs", {})
+            table_id = attrs.get("id")
+            if table_id:
+                # Extract table-level raw XML
+                if "rawTblPr" in attrs:
+                    styles[f"table:{table_id}:tblPr"] = attrs.pop("rawTblPr")
+                if "rawTblGrid" in attrs:
+                    styles[f"table:{table_id}:tblGrid"] = attrs.pop(
+                        "rawTblGrid"
+                    )
+
+                # Process rows and cells
+                for row_idx, row in enumerate(node.get("content", [])):
+                    row_attrs = row.get("attrs", {})
+                    if "rawXml" in row_attrs:
+                        styles[f"table:{table_id}:row:{row_idx}"] = (
+                            row_attrs.pop("rawXml")
+                        )
+
+                    for cell_idx, cell in enumerate(row.get("content", [])):
+                        cell_attrs = cell.get("attrs", {})
+                        if "rawXml" in cell_attrs:
+                            styles[
+                                f"table:{table_id}:row:{row_idx}:cell:{cell_idx}"
+                            ] = cell_attrs.pop("rawXml")
+                        # Remove colwidth (twips interpreted as pixels)
+                        cell_attrs.pop("colwidth", None)
+
+        for child in node.get("content", []):
+            if isinstance(child, dict):
+                process_node(child)
+
+    for node in content:
+        process_node(node)
+
+    return styles if styles else None
+
+
 def to_tiptap(elements: list, comments: dict = None) -> dict:
     """
     Convert a list of parsed document elements to a Tiptap document.
@@ -433,6 +484,8 @@ def to_tiptap(elements: list, comments: dict = None) -> dict:
     Returns:
         Tiptap document JSON structure
     """
+    import json
+
     global _comments_lookup
     _comments_lookup = comments or {}
 
@@ -453,5 +506,15 @@ def to_tiptap(elements: list, comments: dict = None) -> dict:
     # Ensure document has content
     if not content:
         content = [{"type": "paragraph"}]
+
+    # Extract raw styles and store in invisible node
+    raw_styles = _extract_and_store_raw_styles(content)
+    if raw_styles:
+        content.append(
+            {
+                "type": "rawStylesStorage",
+                "attrs": {"data": json.dumps(raw_styles)},
+            }
+        )
 
     return {"type": "doc", "content": content}

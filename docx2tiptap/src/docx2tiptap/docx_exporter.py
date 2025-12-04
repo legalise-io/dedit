@@ -57,6 +57,75 @@ def _clear_document_content(doc: Document) -> None:
         body.remove(child)
 
 
+def _restore_raw_styles(tiptap_json: dict) -> dict:
+    """
+    Restore raw OOXML styles from rawStylesStorage node back into content.
+
+    Finds the storage node, deserializes the data, and puts rawTblPr,
+    rawTblGrid, rawXml back into the appropriate table/row/cell nodes.
+    """
+    import copy
+    import json
+
+    doc = copy.deepcopy(tiptap_json)
+    content = doc.get("content", [])
+
+    # Find and extract rawStylesStorage node
+    raw_styles = {}
+    new_content = []
+    for node in content:
+        if node.get("type") == "rawStylesStorage":
+            data = node.get("attrs", {}).get("data", "{}")
+            raw_styles = json.loads(data)
+        else:
+            new_content.append(node)
+
+    doc["content"] = new_content
+
+    if not raw_styles:
+        return doc
+
+    # Restore styles to nodes
+    def process_node(node: dict):
+        if node.get("type") == "table":
+            attrs = node.get("attrs", {})
+            table_id = attrs.get("id")
+            if table_id:
+                # Restore table-level raw XML
+                if f"table:{table_id}:tblPr" in raw_styles:
+                    attrs["rawTblPr"] = raw_styles[f"table:{table_id}:tblPr"]
+                if f"table:{table_id}:tblGrid" in raw_styles:
+                    attrs["rawTblGrid"] = raw_styles[
+                        f"table:{table_id}:tblGrid"
+                    ]
+
+                # Restore row and cell styles
+                for row_idx, row in enumerate(node.get("content", [])):
+                    row_key = f"table:{table_id}:row:{row_idx}"
+                    if row_key in raw_styles:
+                        if "attrs" not in row:
+                            row["attrs"] = {}
+                        row["attrs"]["rawXml"] = raw_styles[row_key]
+
+                    for cell_idx, cell in enumerate(row.get("content", [])):
+                        cell_key = (
+                            f"table:{table_id}:row:{row_idx}:cell:{cell_idx}"
+                        )
+                        if cell_key in raw_styles:
+                            if "attrs" not in cell:
+                                cell["attrs"] = {}
+                            cell["attrs"]["rawXml"] = raw_styles[cell_key]
+
+        for child in node.get("content", []):
+            if isinstance(child, dict):
+                process_node(child)
+
+    for node in doc.get("content", []):
+        process_node(node)
+
+    return doc
+
+
 def create_docx_from_tiptap(
     tiptap_json: dict,
     comments: Optional[list[dict]] = None,
@@ -80,6 +149,9 @@ def create_docx_from_tiptap(
         BytesIO buffer containing the .docx file
     """
     _reset_revision_counter()
+
+    # Restore raw styles from storage node
+    tiptap_json = _restore_raw_styles(tiptap_json)
 
     # Create document from template or blank
     if template_bytes:
