@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "docx2tiptap"
 version = "0.1.0"
 description = "Parse DOCX files and convert to TipTap JSON format"
-
+readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"
 authors = [
@@ -28,6 +28,20 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/backrank-ou/docx2tiptap"
+Repository = "https://github.com/backrank-ou/docx2tiptap"
+Issues = "https://github.com/backrank-ou/docx2tiptap/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/docx2tiptap"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+]
