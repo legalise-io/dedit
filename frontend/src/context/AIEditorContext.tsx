@@ -235,7 +235,7 @@ function getTrackChangesContext(
   const affectedParagraphIds: string[] = [];
 
   // Walk through the selection range
-  doc.nodesBetween(from, to, (node, pos) => {
+  doc.nodesBetween(from, to, (node, _pos) => {
     if (node.type.name === "paragraph") {
       const paragraphId = node.attrs.id;
       let paragraphHasChanges = false;
