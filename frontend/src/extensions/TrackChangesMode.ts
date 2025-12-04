@@ -220,17 +220,31 @@ export const TrackChangesMode = Extension.create<
                         const text = node.text.slice(textStart, textEnd);
                         if (text) {
                           // Check if this text has an insertion mark
-                          // If so, skip it - deleting inserted text should just remove it
-                          const hasInsertionMark = node.marks.some(
+                          const insertionMark = node.marks.find(
                             (m) => m.type.name === "insertion",
                           );
                           // Check if this text already has a deletion mark
-                          // If so, we need to restore it (put it back) with all its marks
                           const hasDeletionMark = node.marks.some(
                             (m) => m.type.name === "deletion",
                           );
-                          if (hasInsertionMark) {
-                            // Skip - deleting inserted text just removes it
+
+                          if (insertionMark) {
+                            // Text was inserted by someone
+                            const insertionAuthor = insertionMark.attrs.author;
+                            if (insertionAuthor === author) {
+                              // My own insertion - just remove it (undo my work)
+                              // Skip - don't collect for deletion
+                            } else {
+                              // Another author's insertion - mark as deletion in my color
+                              // Remove the insertion mark, collect for deletion marking
+                              const marksWithoutInsertion = node.marks.filter(
+                                (m) => m.type.name !== "insertion",
+                              );
+                              deletedFragments.push({
+                                text,
+                                marks: marksWithoutInsertion,
+                              });
+                            }
                           } else if (hasDeletionMark) {
                             // Already deleted - collect to restore with original marks
                             alreadyDeletedFragments.push({
