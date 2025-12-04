@@ -27,9 +27,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/backrank-ou/docx2tiptap"
-Repository = "https://github.com/backrank-ou/docx2tiptap"
-Issues = "https://github.com/backrank-ou/docx2tiptap/issues"
+Homepage = "https://github.com/jvsteiner/dedit-react-editor/tree/main/docx2tiptap"
+Repository = "https://github.com/jvsteiner/dedit-react-editor"
+Issues = "https://github.com/jvsteiner/dedit-react-editor/issues"
 
 [project.optional-dependencies]
 dev = [
