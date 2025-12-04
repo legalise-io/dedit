@@ -9,14 +9,17 @@ Provides endpoints for:
 from enum import Enum
 from typing import Optional
 
+from docx2tiptap import (
+    comments_to_dict,
+    create_docx_from_tiptap,
+    elements_to_dict,
+    parse_docx,
+    to_tiptap,
+)
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
-
-from parser import comments_to_dict, parse_docx, to_tiptap
-from parser.docx_exporter import create_docx_from_tiptap
-from parser.docx_parser import elements_to_dict
 
 app = FastAPI(
     title="Document Editor API",

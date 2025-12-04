@@ -196,17 +196,20 @@ def process_heading(
 def process_table(
     doc: Document, node: dict, comments_dict: dict, comment_runs_map: dict
 ) -> None:
-    """Process a table node."""
+    """Process a table node with support for merged cells (colspan/rowspan)."""
     rows_data = node.get("content", [])
     if not rows_data:
         return
 
+    # Calculate actual grid dimensions accounting for colspan
     num_rows = len(rows_data)
-    num_cols = (
-        max(len(row.get("content", [])) for row in rows_data)
-        if rows_data
-        else 0
-    )
+    num_cols = 0
+    for row_node in rows_data:
+        row_cols = 0
+        for cell_node in row_node.get("content", []):
+            colspan = cell_node.get("attrs", {}).get("colspan", 1)
+            row_cols += colspan
+        num_cols = max(num_cols, row_cols)
 
     if num_rows == 0 or num_cols == 0:
         return
@@ -216,50 +219,104 @@ def process_table(
     try:
         table.style = "Table Grid"
     except KeyError:
-        # Style not available in this template, use default or try alternatives
         try:
             table.style = "TableGrid"
         except KeyError:
             pass  # Use default table style
 
-    for row_idx, row_node in enumerate(rows_data):
-        cells = row_node.get("content", [])
-        for col_idx, cell_node in enumerate(cells):
-            if col_idx < num_cols:
-                cell = table.rows[row_idx].cells[col_idx]
-                if cell.paragraphs:
-                    cell.paragraphs[0].clear()
+    # Track which cells are covered by merges (row_idx, col_idx) -> True
+    covered_cells: set[tuple[int, int]] = set()
 
-                cell_content = cell_node.get("content", [])
-                for i, content_node in enumerate(cell_content):
-                    if i == 0 and cell.paragraphs:
-                        if content_node.get("type") == "paragraph":
-                            for text_node in content_node.get("content", []):
-                                if text_node.get("type") == "text":
-                                    add_text_with_marks(
-                                        cell.paragraphs[0],
-                                        text_node,
-                                        comments_dict,
-                                        comment_runs_map,
-                                    )
-                        elif content_node.get("type") == "heading":
-                            for text_node in content_node.get("content", []):
-                                if text_node.get("type") == "text":
-                                    run = cell.paragraphs[0].add_run(
-                                        text_node.get("text", "")
-                                    )
-                                    run.bold = True
-                                    _apply_basic_marks(
-                                        run, text_node.get("marks", [])
-                                    )
-                    else:
-                        process_node(
-                            doc,
-                            content_node,
+    # Track merges to apply after filling content: list of (start_cell, end_cell)
+    merges_to_apply: list[tuple] = []
+
+    for row_idx, row_node in enumerate(rows_data):
+        cells_data = row_node.get("content", [])
+        grid_col = 0  # Current position in the grid
+
+        for cell_node in cells_data:
+            # Skip grid positions that are covered by previous merges
+            while (row_idx, grid_col) in covered_cells and grid_col < num_cols:
+                grid_col += 1
+
+            if grid_col >= num_cols:
+                break
+
+            attrs = cell_node.get("attrs", {})
+            colspan = attrs.get("colspan", 1)
+            rowspan = attrs.get("rowspan", 1)
+
+            cell = table.rows[row_idx].cells[grid_col]
+            if cell.paragraphs:
+                cell.paragraphs[0].clear()
+
+            # Fill cell content
+            cell_content = cell_node.get("content", [])
+            _fill_cell_content(
+                doc, cell, cell_content, comments_dict, comment_runs_map
+            )
+
+            # Mark covered cells and prepare merge if needed
+            if colspan > 1 or rowspan > 1:
+                # Mark all cells in the merge range as covered
+                for r in range(row_idx, row_idx + rowspan):
+                    for c in range(grid_col, grid_col + colspan):
+                        if r != row_idx or c != grid_col:  # Don't mark origin
+                            covered_cells.add((r, c))
+
+                # Record merge to apply
+                end_row = min(row_idx + rowspan - 1, num_rows - 1)
+                end_col = min(grid_col + colspan - 1, num_cols - 1)
+                if end_row > row_idx or end_col > grid_col:
+                    start_cell = table.rows[row_idx].cells[grid_col]
+                    end_cell = table.rows[end_row].cells[end_col]
+                    merges_to_apply.append((start_cell, end_cell))
+
+            grid_col += colspan
+
+    # Apply all merges after content is filled
+    for start_cell, end_cell in merges_to_apply:
+        try:
+            start_cell.merge(end_cell)
+        except Exception:
+            pass  # Skip invalid merges gracefully
+
+
+def _fill_cell_content(
+    doc: Document,
+    cell,
+    cell_content: list,
+    comments_dict: dict,
+    comment_runs_map: dict,
+) -> None:
+    """Fill a table cell with content."""
+    for i, content_node in enumerate(cell_content):
+        if i == 0 and cell.paragraphs:
+            if content_node.get("type") == "paragraph":
+                for text_node in content_node.get("content", []):
+                    if text_node.get("type") == "text":
+                        add_text_with_marks(
+                            cell.paragraphs[0],
+                            text_node,
                             comments_dict,
                             comment_runs_map,
-                            table_cell=cell,
                         )
+            elif content_node.get("type") == "heading":
+                for text_node in content_node.get("content", []):
+                    if text_node.get("type") == "text":
+                        run = cell.paragraphs[0].add_run(
+                            text_node.get("text", "")
+                        )
+                        run.bold = True
+                        _apply_basic_marks(run, text_node.get("marks", []))
+        else:
+            process_node(
+                doc,
+                content_node,
+                comments_dict,
+                comment_runs_map,
+                table_cell=cell,
+            )
 
 
 def process_section(

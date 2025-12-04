@@ -58,6 +58,8 @@ class TableCell:
     content: list = field(
         default_factory=list
     )  # List of Paragraph or nested Table
+    colspan: int = 1  # Number of columns this cell spans
+    rowspan: int = 1  # Number of rows this cell spans
 
 
 @dataclass
@@ -438,24 +440,59 @@ def parse_table(
 ) -> Table:
     """Parse a python-docx table into our intermediate format.
 
-    Note: python-docx's row.cells returns the same cell object multiple times
-    for horizontally merged cells (colspan). We track cell identity to avoid
-    duplicating content.
+    Handles merged cells by:
+    1. Detecting colspan via tc.grid_span
+    2. Detecting rowspan via tc.vMerge attribute
+    3. Storing merge info in TableCell.colspan and TableCell.rowspan
+    4. Skipping continuation cells (cells that are part of a merge but not the origin)
+
+    Note: We iterate over raw tc elements instead of row.cells because row.cells
+    returns the same _Cell object for vertically merged cells, making it impossible
+    to detect which rows are continuations.
     """
+    from docx.table import _Cell
+
     parsed_table = Table()
 
-    for row in table.rows:
+    # Track vertical merges: grid_col -> {"cell": TableCell, "rowspan": int}
+    # This helps us calculate rowspan and skip continuation cells
+    vmerge_tracking: dict[int, dict] = {}
+
+    for row_idx, row in enumerate(table.rows):
         parsed_row = TableRow()
-        seen_cells = set()  # Track cell objects by id to handle merged cells
+        grid_col = 0  # Track position in the grid
 
-        for cell in row.cells:
-            # Skip duplicate cell objects (horizontally merged cells)
-            cell_id = id(cell)
-            if cell_id in seen_cells:
+        # Iterate over raw tc elements to properly detect vMerge
+        for tc in row._tr.tc_lst:
+            colspan = tc.grid_span
+            vmerge = (
+                tc.vMerge
+            )  # None = no merge, "restart" = start, "continue" = continuation
+
+            # Check if this is a continuation of a vertical merge
+            if vmerge == "continue":
+                # This cell continues a vertical merge from above
+                # Increment the rowspan of the origin cell and skip this one
+                if grid_col in vmerge_tracking:
+                    vmerge_tracking[grid_col]["rowspan"] += 1
+                grid_col += colspan
                 continue
-            seen_cells.add(cell_id)
 
-            parsed_cell = TableCell()
+            # This is either a new cell or the start of a vertical merge
+            parsed_cell = TableCell(colspan=colspan, rowspan=1)
+
+            # If there was a previous vertical merge in this column, finalize its rowspan
+            if grid_col in vmerge_tracking:
+                prev_info = vmerge_tracking[grid_col]
+                prev_info["cell"].rowspan = prev_info["rowspan"]
+                del vmerge_tracking[grid_col]
+
+            # If this starts a new vertical merge, track it
+            if vmerge == "restart":
+                vmerge_tracking[grid_col] = {"cell": parsed_cell, "rowspan": 1}
+
+            # Create a _Cell wrapper to access paragraphs and tables
+            cell = _Cell(tc, table)
 
             # Parse cell content - cells can contain paragraphs and nested tables
             for para in cell.paragraphs:
@@ -474,8 +511,13 @@ def parse_table(
                 parsed_cell.content.append(Paragraph(runs=[TextRun(text="")]))
 
             parsed_row.cells.append(parsed_cell)
+            grid_col += colspan
 
         parsed_table.rows.append(parsed_row)
+
+    # Update rowspan values for all tracked vertical merges
+    for col_info in vmerge_tracking.values():
+        col_info["cell"].rowspan = col_info["rowspan"]
 
     return parsed_table
 
@@ -554,7 +596,11 @@ def elements_to_dict(elements: list) -> list[dict]:
                     "rows": [
                         {
                             "cells": [
-                                {"content": elements_to_dict(cell.content)}
+                                {
+                                    "content": elements_to_dict(cell.content),
+                                    "colspan": cell.colspan,
+                                    "rowspan": cell.rowspan,
+                                }
                                 for cell in row.cells
                             ]
                         }

@@ -133,7 +133,20 @@ def table_to_tiptap(table: Table) -> dict:
 
             # First row uses tableHeader, rest use tableCell
             cell_type = "tableHeader" if row_idx == 0 else "tableCell"
-            cells.append({"type": cell_type, "content": cell_content})
+
+            # Build cell with merge attributes
+            cell_node = {"type": cell_type, "content": cell_content}
+
+            # Add colspan/rowspan attrs if they differ from default (1)
+            attrs = {}
+            if cell.colspan > 1:
+                attrs["colspan"] = cell.colspan
+            if cell.rowspan > 1:
+                attrs["rowspan"] = cell.rowspan
+            if attrs:
+                cell_node["attrs"] = attrs
+
+            cells.append(cell_node)
 
         rows.append({"type": "tableRow", "content": cells})
 
@@ -233,7 +246,20 @@ def convert_dict_element(elem: dict) -> dict:
                     cell_content = [{"type": "paragraph"}]
 
                 cell_type = "tableHeader" if row_idx == 0 else "tableCell"
-                cells.append({"type": cell_type, "content": cell_content})
+
+                # Build cell with merge attributes
+                cell_node = {"type": cell_type, "content": cell_content}
+
+                # Add colspan/rowspan attrs if present and > 1
+                attrs = {}
+                if cell.get("colspan", 1) > 1:
+                    attrs["colspan"] = cell["colspan"]
+                if cell.get("rowspan", 1) > 1:
+                    attrs["rowspan"] = cell["rowspan"]
+                if attrs:
+                    cell_node["attrs"] = attrs
+
+                cells.append(cell_node)
 
             rows.append({"type": "tableRow", "content": cells})
 
