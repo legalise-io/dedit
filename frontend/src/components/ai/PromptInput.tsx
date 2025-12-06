@@ -94,7 +94,7 @@ export function PromptInput({
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   // Check if user is typing a slash command
@@ -111,56 +111,133 @@ export function PromptInput({
   // Check if drag/drop is enabled
   const isDragDropEnabled = !!config.onResolveContextItems;
 
-  // Auto-resize textarea
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea) {
-      textarea.style.height = "auto";
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+  // Get text content from contenteditable (excluding the pill)
+  const getEditorText = useCallback((): string => {
+    const editor = editorRef.current;
+    if (!editor) return "";
+
+    // Get all text nodes, excluding the pill
+    let text = "";
+    const walker = document.createTreeWalker(
+      editor,
+      NodeFilter.SHOW_TEXT,
+      null,
+    );
+    let node;
+    while ((node = walker.nextNode())) {
+      // Skip text inside the pill
+      if (!node.parentElement?.closest(".command-pill")) {
+        text += node.textContent;
+      }
     }
-  }, [inputText]);
+    return text;
+  }, []);
+
+  // Focus and place cursor at end
+  const focusEditor = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.focus();
+    // Place cursor at end
+    const selection = window.getSelection();
+    if (selection) {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  }, []);
+
+  // Insert pill into the editor DOM
+  const insertPill = useCallback(
+    (command: SlashCommand) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      // Clear editor and add pill
+      editor.innerHTML = "";
+      const pill = document.createElement("span");
+      pill.className = "command-pill";
+      pill.contentEditable = "false";
+      pill.title = "Click or backspace to remove";
+      pill.innerHTML = `<span class="command-pill-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span class="command-pill-name">/${command.name}</span>`;
+      pill.onclick = () => {
+        setActiveCommand(null);
+        editor.innerHTML = "";
+        editor.focus();
+      };
+      editor.appendChild(pill);
+      // Add a space after for typing
+      editor.appendChild(document.createTextNode("\u00A0"));
+      focusEditor();
+    },
+    [focusEditor],
+  );
+
+  // Remove pill from editor
+  const removePillFromEditor = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const pill = editor.querySelector(".command-pill");
+    if (pill) {
+      pill.remove();
+    }
+  }, []);
 
   // Check if we can send prompts
   const canSendPrompts = apiKey || config.onAIRequest;
 
   // Complete the selected command - sets it as active pill
-  const completeCommand = useCallback((command: SlashCommand) => {
-    setActiveCommand(command);
-    setInputText("");
-    setSelectedCommandIndex(0);
-    textareaRef.current?.focus();
-  }, []);
+  const completeCommand = useCallback(
+    (command: SlashCommand) => {
+      setActiveCommand(command);
+      setInputText("");
+      setSelectedCommandIndex(0);
+      insertPill(command);
+    },
+    [insertPill],
+  );
 
   // Remove the active command pill
   const removeCommand = useCallback(() => {
     setActiveCommand(null);
-    textareaRef.current?.focus();
-  }, []);
+    removePillFromEditor();
+    setTimeout(() => focusEditor(), 0);
+  }, [removePillFromEditor, focusEditor]);
 
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
-      if (!inputText.trim() && !activeCommand) return;
+      const text = getEditorText().trim();
+      if (!text && !activeCommand) return;
       if (isLoading || !canSendPrompts) return;
 
       // Build the full prompt
       const fullPrompt = activeCommand
-        ? `/${activeCommand.name} ${inputText.trim()}`
-        : inputText.trim();
+        ? `/${activeCommand.name} ${text}`
+        : text;
 
       const isReviewMode = activeCommand?.name === "review";
 
       await sendPrompt(fullPrompt, { forceReviewMode: isReviewMode });
       setInputText("");
       setActiveCommand(null);
+      // Clear the editor
+      if (editorRef.current) {
+        editorRef.current.textContent = "";
+      }
     },
-    [inputText, activeCommand, isLoading, canSendPrompts, sendPrompt],
+    [getEditorText, activeCommand, isLoading, canSendPrompts, sendPrompt],
   );
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const text = getEditorText();
+
       // Handle backspace on empty input to remove command pill
-      if (e.key === "Backspace" && inputText === "" && activeCommand) {
+      if (e.key === "Backspace" && text === "" && activeCommand) {
         e.preventDefault();
         removeCommand();
         return;
@@ -190,6 +267,9 @@ export function PromptInput({
         if (e.key === "Escape") {
           e.preventDefault();
           setInputText("");
+          if (editorRef.current) {
+            editorRef.current.textContent = "";
+          }
           return;
         }
       }
@@ -201,7 +281,7 @@ export function PromptInput({
       }
     },
     [
-      inputText,
+      getEditorText,
       activeCommand,
       isTypingCommand,
       matchingCommands,
@@ -211,6 +291,12 @@ export function PromptInput({
       handleSubmit,
     ],
   );
+
+  // Handle input changes in contenteditable
+  const handleInput = useCallback(() => {
+    const text = getEditorText();
+    setInputText(text);
+  }, [getEditorText]);
 
   // Drag/drop handlers
   const handleDragEnter = useCallback(
@@ -386,51 +472,37 @@ export function PromptInput({
       )}
 
       <form onSubmit={handleSubmit} className="prompt-form">
-        <div className="prompt-input-wrapper">
-          {/* Slash command autocomplete menu */}
-          {isTypingCommand && matchingCommands.length > 0 && (
-            <div className="slash-command-menu">
-              {matchingCommands.map((cmd, index) => (
-                <button
-                  key={cmd.name}
-                  type="button"
-                  className={`slash-command-item ${index === selectedCommandIndex ? "slash-command-item--selected" : ""}`}
-                  onClick={() => completeCommand(cmd)}
-                  onMouseEnter={() => setSelectedCommandIndex(index)}
-                >
-                  <span className="slash-command-icon">{cmd.icon}</span>
-                  <span className="slash-command-name">/{cmd.name}</span>
-                  <span className="slash-command-desc">{cmd.description}</span>
-                </button>
-              ))}
-              <div className="slash-command-hint">
-                <kbd>Tab</kbd> or <kbd>Enter</kbd> to select
-              </div>
+        {/* Slash command autocomplete menu */}
+        {isTypingCommand && matchingCommands.length > 0 && (
+          <div className="slash-command-menu">
+            {matchingCommands.map((cmd, index) => (
+              <button
+                key={cmd.name}
+                type="button"
+                className={`slash-command-item ${index === selectedCommandIndex ? "slash-command-item--selected" : ""}`}
+                onClick={() => completeCommand(cmd)}
+                onMouseEnter={() => setSelectedCommandIndex(index)}
+              >
+                <span className="slash-command-icon">{cmd.icon}</span>
+                <span className="slash-command-name">/{cmd.name}</span>
+                <span className="slash-command-desc">{cmd.description}</span>
+              </button>
+            ))}
+            <div className="slash-command-hint">
+              <kbd>Tab</kbd> or <kbd>Enter</kbd> to select
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Active command pill */}
-          {activeCommand && (
-            <button
-              type="button"
-              className="command-pill"
-              onClick={removeCommand}
-              title="Click or backspace to remove"
-            >
-              <span className="command-pill-icon">{activeCommand.icon}</span>
-              <span className="command-pill-name">/{activeCommand.name}</span>
-            </button>
-          )}
-
-          <textarea
-            ref={textareaRef}
-            className="prompt-textarea"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+        <div className="prompt-input-wrapper">
+          {/* Contenteditable with inline pill - pill is inserted via DOM, not React */}
+          <div
+            ref={editorRef}
+            className={`prompt-editor${activeCommand && !inputText.trim() ? " show-placeholder" : ""}`}
+            contentEditable={!isLoading && !!canSendPrompts}
+            onInput={handleInput}
             onKeyDown={handleKeyDown}
-            placeholder={getPlaceholder()}
-            disabled={isLoading || !canSendPrompts}
-            rows={1}
+            data-placeholder={getPlaceholder()}
           />
           <button
             type="submit"

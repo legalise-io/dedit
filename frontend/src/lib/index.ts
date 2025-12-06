@@ -50,6 +50,8 @@ export type {
   AIResponse,
   AIEditRequest,
   AIEditResponse,
+  AIReviewRequest,
+  AIReviewResponse,
 } from "../context/AIEditorContext";
 
 // Types

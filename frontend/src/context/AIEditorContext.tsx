@@ -69,7 +69,7 @@ export interface SelectionContext {
   hasSelection: boolean;
 }
 
-// Request/Response types for custom AI handler
+// Request/Response types for custom AI handler (edit mode)
 export interface AIEditRequest {
   prompt: string;
   paragraphs: Array<{ id: string; text: string }>;
@@ -89,14 +89,38 @@ export interface AIEditResponse {
   }>;
 }
 
+// Request/Response types for custom AI handler (review mode)
+export interface AIReviewRequest {
+  prompt: string;
+  changes: Array<{
+    index: number;
+    deletedText: string;
+    insertedText: string;
+    author: string | null;
+  }>;
+}
+
+export interface AIReviewResponse {
+  message: string;
+  recommendations: Array<{
+    index: number;
+    recommendation: "accept" | "reject" | "leave_alone";
+    reason: string;
+  }>;
+}
+
 export interface AIEditorConfig {
   aiAuthorName?: string;
 
-  // Custom AI request handler - if provided, all AI calls go through this
+  // Custom AI request handler for edit mode - if provided, edit AI calls go through this
   // If not provided, falls back to direct OpenAI API (requires apiKey)
   onAIRequest?: (request: AIEditRequest) => Promise<AIEditResponse>;
 
-  // Only used if onAIRequest is not provided (direct OpenAI mode)
+  // Custom AI request handler for review mode - if provided, review AI calls go through this
+  // If not provided, falls back to direct OpenAI API (requires apiKey)
+  onAIReviewRequest?: (request: AIReviewRequest) => Promise<AIReviewResponse>;
+
+  // Only used if onAIRequest/onAIReviewRequest is not provided (direct OpenAI mode)
   aiModel?: string;
   aiTemperature?: number;
 
@@ -1639,102 +1663,7 @@ export function AIEditorProvider({
             reviewPrompt.substring(0, 500) + "...",
           );
 
-          // Define JSON schema for review response
-          const reviewSchema = {
-            type: "json_schema",
-            json_schema: {
-              name: "ai_review_response",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  message: {
-                    type: "string",
-                    description: "Summary of the review",
-                  },
-                  recommendations: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        index: {
-                          type: "number",
-                          description: "Index of the change being evaluated",
-                        },
-                        recommendation: {
-                          type: "string",
-                          enum: ["accept", "reject", "leave_alone"],
-                          description: "The recommended action",
-                        },
-                        reason: {
-                          type: "string",
-                          description:
-                            "Brief explanation for this recommendation",
-                        },
-                      },
-                      required: ["index", "recommendation", "reason"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-                required: ["message", "recommendations"],
-                additionalProperties: false,
-              },
-            },
-          };
-
-          console.log("[sendPrompt] Review mode - sending API request...");
-          console.log("[sendPrompt] Model:", config.aiModel || "gpt-5-mini");
-          console.log("[sendPrompt] User prompt:", effectivePrompt);
-
-          const requestBody = {
-            model: config.aiModel || "gpt-5-mini",
-            messages: [
-              { role: "system", content: reviewPrompt },
-              { role: "user", content: effectivePrompt },
-            ],
-            temperature: config.aiTemperature ?? 1.0,
-            max_completion_tokens: 65536,
-            response_format: reviewSchema,
-          };
-          console.log(
-            "[sendPrompt] Request body:",
-            JSON.stringify(requestBody, null, 2).substring(0, 1000) + "...",
-          );
-
-          const response = await fetch(
-            "https://api.openai.com/v1/chat/completions",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify(requestBody),
-            },
-          );
-
-          console.log("[sendPrompt] Response status:", response.status);
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            console.error("[sendPrompt] API error:", errorData);
-            throw new Error(
-              errorData.error?.message ||
-                `API request failed: ${response.status}`,
-            );
-          }
-
-          const data = await response.json();
-          console.log("[sendPrompt] Response data received");
-          console.log(
-            "[sendPrompt] Full API response:",
-            JSON.stringify(data, null, 2),
-          );
-          const assistantContent = data.choices?.[0]?.message?.content || "{}";
-          console.log("[sendPrompt] Assistant content:", assistantContent);
-
-          // Parse review response
+          // Parse review response - will be populated by either custom handler or direct API
           let reviewResponse: {
             message: string;
             recommendations: Array<{
@@ -1744,11 +1673,143 @@ export function AIEditorProvider({
             }>;
           };
 
-          try {
-            reviewResponse = JSON.parse(assistantContent);
-          } catch (parseErr) {
-            console.error("[sendPrompt] Review JSON parse failed:", parseErr);
-            reviewResponse = { message: assistantContent, recommendations: [] };
+          if (config.onAIReviewRequest) {
+            // Use custom handler (backend proxy mode)
+            console.log("[sendPrompt] Using custom onAIReviewRequest handler");
+
+            const request: AIReviewRequest = {
+              prompt: effectivePrompt,
+              changes: groupedChanges.map((gc, idx) => ({
+                index: idx,
+                deletedText: gc.deletedText,
+                insertedText: gc.insertedText,
+                author: gc.author,
+              })),
+            };
+
+            const response = await config.onAIReviewRequest(request);
+            reviewResponse = {
+              message: response.message,
+              recommendations: response.recommendations,
+            };
+
+            console.log(
+              "[sendPrompt] Custom handler response - message:",
+              reviewResponse.message?.substring(0, 100),
+            );
+            console.log(
+              "[sendPrompt] Custom handler response - recommendations:",
+              reviewResponse.recommendations?.length || 0,
+            );
+          } else {
+            // Direct OpenAI API mode
+            console.log("[sendPrompt] Using direct OpenAI API for review");
+
+            // Define JSON schema for review response
+            const reviewSchema = {
+              type: "json_schema",
+              json_schema: {
+                name: "ai_review_response",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    message: {
+                      type: "string",
+                      description: "Summary of the review",
+                    },
+                    recommendations: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          index: {
+                            type: "number",
+                            description: "Index of the change being evaluated",
+                          },
+                          recommendation: {
+                            type: "string",
+                            enum: ["accept", "reject", "leave_alone"],
+                            description: "The recommended action",
+                          },
+                          reason: {
+                            type: "string",
+                            description:
+                              "Brief explanation for this recommendation",
+                          },
+                        },
+                        required: ["index", "recommendation", "reason"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["message", "recommendations"],
+                  additionalProperties: false,
+                },
+              },
+            };
+
+            console.log("[sendPrompt] Review mode - sending API request...");
+            console.log("[sendPrompt] Model:", config.aiModel || "gpt-5-mini");
+            console.log("[sendPrompt] User prompt:", effectivePrompt);
+
+            const requestBody = {
+              model: config.aiModel || "gpt-5-mini",
+              messages: [
+                { role: "system", content: reviewPrompt },
+                { role: "user", content: effectivePrompt },
+              ],
+              temperature: config.aiTemperature ?? 1.0,
+              max_completion_tokens: 65536,
+              response_format: reviewSchema,
+            };
+            console.log(
+              "[sendPrompt] Request body:",
+              JSON.stringify(requestBody, null, 2).substring(0, 1000) + "...",
+            );
+
+            const response = await fetch(
+              "https://api.openai.com/v1/chat/completions",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify(requestBody),
+              },
+            );
+
+            console.log("[sendPrompt] Response status:", response.status);
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}));
+              console.error("[sendPrompt] API error:", errorData);
+              throw new Error(
+                errorData.error?.message ||
+                  `API request failed: ${response.status}`,
+              );
+            }
+
+            const data = await response.json();
+            console.log("[sendPrompt] Response data received");
+            console.log(
+              "[sendPrompt] Full API response:",
+              JSON.stringify(data, null, 2),
+            );
+            const assistantContent =
+              data.choices?.[0]?.message?.content || "{}";
+            console.log("[sendPrompt] Assistant content:", assistantContent);
+
+            try {
+              reviewResponse = JSON.parse(assistantContent);
+            } catch (parseErr) {
+              console.error("[sendPrompt] Review JSON parse failed:", parseErr);
+              reviewResponse = {
+                message: assistantContent,
+                recommendations: [],
+              };
+            }
           }
 
           // Convert AI recommendations to TrackChangeRecommendation objects

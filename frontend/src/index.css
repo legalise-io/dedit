@@ -2491,7 +2491,7 @@ del.selected-change,
     box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
 }
 
-/* Prompt input wrapper - contains pill and textarea */
+/* Prompt input wrapper - contains editor and submit button */
 .prompt-input-wrapper {
     display: flex;
     align-items: flex-start;
@@ -2499,7 +2499,7 @@ del.selected-change,
     border-radius: 6px;
     background: white;
     padding: 8px 12px;
-    gap: 4px;
+    gap: 8px;
 }
 
 .prompt-input-wrapper:focus-within {
@@ -2507,19 +2507,48 @@ del.selected-change,
     box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
-/* Command pill - inline inside text input */
+/* Contenteditable editor - text flows naturally with inline pill */
+.prompt-editor {
+    flex: 1;
+    min-height: 21px;
+    max-height: 120px;
+    overflow-y: auto;
+    outline: none;
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: inherit;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: inherit;
+}
+
+/* Placeholder via data attribute - only show when truly empty */
+.prompt-editor:empty::before {
+    content: attr(data-placeholder);
+    color: #9ca3af;
+    pointer-events: none;
+}
+
+/* When pill is present, show placeholder after it using a wrapper approach */
+.prompt-editor.show-placeholder::after {
+    content: attr(data-placeholder);
+    color: #9ca3af;
+    pointer-events: none;
+}
+
+/* Command pill - truly inline, text wraps under it naturally */
 .command-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 2px 6px;
+    display: inline;
+    padding: 1px 5px;
     background: #f3e8ff;
     border: none;
     border-radius: 3px;
     color: #7c3aed;
-    font-size: 13px;
+    font-size: 14px;
     cursor: pointer;
-    flex-shrink: 0;
+    margin-right: 4px;
+    white-space: nowrap;
+    user-select: none;
 }
 
 .command-pill:hover {
@@ -2527,32 +2556,17 @@ del.selected-change,
 }
 
 .command-pill-icon {
-    display: flex;
-    align-items: center;
+    display: inline;
+    margin-right: 2px;
 }
 
 .command-pill-icon svg {
     width: 12px;
     height: 12px;
+    vertical-align: -1px;
+    display: inline;
 }
 
 .command-pill-name {
     font-weight: 500;
-}
-
-/* Textarea inside wrapper - no border */
-.prompt-input-wrapper .prompt-textarea {
-    flex: 1;
-    border: none;
-    outline: none;
-    background: transparent;
-    resize: none;
-    font-size: 14px;
-    line-height: 1.5;
-    padding: 0;
-    margin: 0;
-}
-
-.prompt-input-wrapper .prompt-textarea::placeholder {
-    color: #9ca3af;
 }
