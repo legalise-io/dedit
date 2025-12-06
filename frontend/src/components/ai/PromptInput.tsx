@@ -1,10 +1,90 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useAIEditor } from "../../context/AIEditorContext";
 
 interface PromptInputProps {
   className?: string;
   placeholder?: string;
   showSelectionIndicator?: boolean;
+}
+
+/** Available slash commands */
+interface SlashCommand {
+  name: string;
+  description: string;
+  icon: React.ReactNode;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  {
+    name: "review",
+    description: "Review track changes and recommend accept/reject",
+    icon: (
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      >
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    ),
+  },
+];
+
+/**
+ * Parse prompt to detect completed /command prefix.
+ */
+function parsePromptCommand(prompt: string): {
+  isReviewCommand: boolean;
+  promptText: string;
+} {
+  const trimmed = prompt.trim();
+  const reviewMatch = trimmed.match(/^\/review\s+(.*)/i);
+
+  if (reviewMatch) {
+    return {
+      isReviewCommand: true,
+      promptText: reviewMatch[1] || "",
+    };
+  }
+
+  return {
+    isReviewCommand: false,
+    promptText: trimmed,
+  };
+}
+
+/**
+ * Check if user is typing a slash command (starts with / but not yet complete)
+ */
+function getSlashCommandState(prompt: string): {
+  isTypingCommand: boolean;
+  partialCommand: string;
+  matchingCommands: SlashCommand[];
+} {
+  // Check if prompt starts with / and cursor is still in command portion
+  const match = prompt.match(/^\/(\w*)$/);
+
+  if (match) {
+    const partial = match[1].toLowerCase();
+    const matching = SLASH_COMMANDS.filter((cmd) =>
+      cmd.name.toLowerCase().startsWith(partial),
+    );
+    return {
+      isTypingCommand: true,
+      partialCommand: partial,
+      matchingCommands: matching,
+    };
+  }
+
+  return {
+    isTypingCommand: false,
+    partialCommand: "",
+    matchingCommands: [],
+  };
 }
 
 /**
@@ -16,20 +96,8 @@ interface PromptInputProps {
  * - If text is selected: AI will target that specific text
  * - If no selection: AI will apply changes globally or answer questions
  *
- * Supports drag/drop of context items when a ContextItemResolver is configured
- * via AIEditorProvider's config.onResolveContextItems.
- *
- * Usage:
- * ```tsx
- * <AIEditorProvider>
- *   <div className="bottom-bar">
- *     <PromptInput showSelectionIndicator />
- *   </div>
- *   <div className="main">
- *     <DocumentEditor ... />
- *   </div>
- * </AIEditorProvider>
- * ```
+ * Supports slash commands like /review for special modes.
+ * Type "/" to see available commands.
  */
 export function PromptInput({
   className = "",
@@ -49,8 +117,27 @@ export function PromptInput({
   } = useAIEditor();
   const [prompt, setPrompt] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Parse the prompt for completed commands
+  const { isReviewCommand } = useMemo(
+    () => parsePromptCommand(prompt),
+    [prompt],
+  );
+
+  // Check if user is typing a slash command
+  const { isTypingCommand, matchingCommands } = useMemo(
+    () => getSlashCommandState(prompt),
+    [prompt],
+  );
+
+  // Reset selection when commands change
+  useEffect(() => {
+    setSelectedCommandIndex(0);
+  }, [matchingCommands.length]);
 
   // Check if drag/drop is enabled (resolver is configured)
   const isDragDropEnabled = !!config.onResolveContextItems;
@@ -67,27 +154,68 @@ export function PromptInput({
   // Check if we can send prompts (either have API key or custom handler)
   const canSendPrompts = apiKey || config.onAIRequest;
 
+  // Complete the selected command
+  const completeCommand = useCallback((command: SlashCommand) => {
+    setPrompt(`/${command.name} `);
+    setSelectedCommandIndex(0);
+    textareaRef.current?.focus();
+  }, []);
+
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
       if (!prompt.trim() || isLoading || !canSendPrompts) return;
 
-      await sendPrompt(prompt.trim());
+      // Send with review flag if /review command was used
+      await sendPrompt(prompt.trim(), { forceReviewMode: isReviewCommand });
       setPrompt("");
-      // Don't clear context items - they persist in chat history
-      // and are cleared when the user clears the chat
     },
-    [prompt, isLoading, canSendPrompts, sendPrompt],
+    [prompt, isLoading, canSendPrompts, sendPrompt, isReviewCommand],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // Handle command menu navigation
+      if (isTypingCommand && matchingCommands.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSelectedCommandIndex((prev) =>
+            prev < matchingCommands.length - 1 ? prev + 1 : 0,
+          );
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSelectedCommandIndex((prev) =>
+            prev > 0 ? prev - 1 : matchingCommands.length - 1,
+          );
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          completeCommand(matchingCommands[selectedCommandIndex]);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setPrompt("");
+          return;
+        }
+      }
+
+      // Normal submit
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSubmit();
       }
     },
-    [handleSubmit],
+    [
+      isTypingCommand,
+      matchingCommands,
+      selectedCommandIndex,
+      completeCommand,
+      handleSubmit,
+    ],
   );
 
   // Drag/drop handlers
@@ -105,7 +233,6 @@ export function PromptInput({
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only set to false if we're leaving the drop zone entirely
     const rect = dropZoneRef.current?.getBoundingClientRect();
     if (rect) {
       const { clientX, clientY } = e;
@@ -160,7 +287,7 @@ export function PromptInput({
       return `Edit "${truncatedText}${ellipsis}" or ask about it...`;
     }
 
-    return "Ask a question or request document-wide changes...";
+    return "Type / for commands, or ask a question...";
   };
 
   return (
@@ -260,6 +387,28 @@ export function PromptInput({
 
       <form onSubmit={handleSubmit} className="prompt-form">
         <div className="prompt-input-wrapper">
+          {/* Slash command autocomplete menu */}
+          {isTypingCommand && matchingCommands.length > 0 && (
+            <div ref={menuRef} className="slash-command-menu">
+              {matchingCommands.map((cmd, index) => (
+                <button
+                  key={cmd.name}
+                  type="button"
+                  className={`slash-command-item ${index === selectedCommandIndex ? "slash-command-item--selected" : ""}`}
+                  onClick={() => completeCommand(cmd)}
+                  onMouseEnter={() => setSelectedCommandIndex(index)}
+                >
+                  <span className="slash-command-icon">{cmd.icon}</span>
+                  <span className="slash-command-name">/{cmd.name}</span>
+                  <span className="slash-command-desc">{cmd.description}</span>
+                </button>
+              ))}
+              <div className="slash-command-hint">
+                <kbd>Tab</kbd> or <kbd>Enter</kbd> to select
+              </div>
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             className="prompt-textarea"

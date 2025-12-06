@@ -3,6 +3,10 @@
 > Project context and guidance for AI assistants
 > Last Updated: 2024
 
+## Important Notes
+
+- **Preferred OpenAI Model**: `gpt-5-mini` - Use this as the default model for AI features
+
 ## Project Overview
 
 **dedit** (Document Editor) is a full-stack document editing solution that enables:

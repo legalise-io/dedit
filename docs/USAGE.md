@@ -2064,7 +2064,7 @@ interface AIEditorConfig {
   onAIRequest?: (request: AIEditRequest) => Promise<AIEditResponse>;
 
   // Only used if onAIRequest is not provided (direct OpenAI mode)
-  aiModel?: string;        // Default: "gpt-4.1-mini"
+  aiModel?: string;        // Default: "gpt-5-mini"
   aiTemperature?: number;  // Default: 1.0
 }
 ```
@@ -2558,7 +2558,7 @@ async def ai_edit(request: AIEditRequest, user: User = Depends(get_current_user)
 
     # Call AI provider
     response = await openai.chat.completions.create(
-        model="gpt-4.1-mini",
+        model="gpt-5-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": request.prompt}

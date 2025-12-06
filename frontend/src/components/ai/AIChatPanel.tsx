@@ -4,6 +4,7 @@ import {
   ChatMessage,
   AIEdit,
 } from "../../context/AIEditorContext";
+import type { TrackChangeRecommendation } from "../../lib/types";
 
 interface AIChatPanelProps {
   className?: string;
@@ -46,6 +47,10 @@ export function AIChatPanel({
     acceptEdit,
     rejectEdit,
     getNextEdit,
+    applyRecommendation,
+    discardRecommendation,
+    getNextRecommendation,
+    goToRecommendation,
   } = useAIEditor();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<HTMLDivElement>(null);
@@ -106,6 +111,55 @@ export function AIChatPanel({
       setTimeout(() => scrollChatToNextEdit(edit), 50);
     },
     [rejectEdit, scrollChatToNextEdit],
+  );
+
+  // Scroll the chat panel to show the next recommendation at the top
+  const scrollChatToNextRecommendation = useCallback(
+    (currentRec: TrackChangeRecommendation) => {
+      const nextRec = getNextRecommendation(currentRec);
+      if (nextRec && chatMessagesRef.current) {
+        const nextRecElement = chatMessagesRef.current.querySelector(
+          `[data-rec-id="${nextRec.id}"]`,
+        );
+        if (nextRecElement) {
+          const container = chatMessagesRef.current;
+          const elementTop =
+            nextRecElement.getBoundingClientRect().top -
+            container.getBoundingClientRect().top +
+            container.scrollTop;
+          container.scrollTo({
+            top: elementTop - 8,
+            behavior: "smooth",
+          });
+        }
+      }
+    },
+    [getNextRecommendation],
+  );
+
+  const handleRecommendationClick = useCallback(
+    (rec: TrackChangeRecommendation) => {
+      goToRecommendation(rec);
+    },
+    [goToRecommendation],
+  );
+
+  const handleApply = useCallback(
+    (e: React.MouseEvent, rec: TrackChangeRecommendation) => {
+      e.stopPropagation();
+      applyRecommendation(rec);
+      setTimeout(() => scrollChatToNextRecommendation(rec), 50);
+    },
+    [applyRecommendation, scrollChatToNextRecommendation],
+  );
+
+  const handleDiscard = useCallback(
+    (e: React.MouseEvent, rec: TrackChangeRecommendation) => {
+      e.stopPropagation();
+      discardRecommendation(rec);
+      setTimeout(() => scrollChatToNextRecommendation(rec), 50);
+    },
+    [discardRecommendation, scrollChatToNextRecommendation],
   );
 
   const renderEditLink = (edit: AIEdit, index: number) => {
@@ -228,14 +282,128 @@ export function AIChatPanel({
     );
   };
 
+  const renderRecommendation = (
+    rec: TrackChangeRecommendation,
+    index: number,
+  ) => {
+    // Format: "old → new" for replacements, or just one side
+    let displayText: string;
+    if (rec.deletedText && rec.insertedText) {
+      const del =
+        rec.deletedText.length > 15
+          ? rec.deletedText.slice(0, 15) + "..."
+          : rec.deletedText;
+      const ins =
+        rec.insertedText.length > 15
+          ? rec.insertedText.slice(0, 15) + "..."
+          : rec.insertedText;
+      displayText = `${del} → ${ins}`;
+    } else if (rec.deletedText) {
+      const del =
+        rec.deletedText.length > 30
+          ? rec.deletedText.slice(0, 30) + "..."
+          : rec.deletedText;
+      displayText = `−${del}`;
+    } else if (rec.insertedText) {
+      const ins =
+        rec.insertedText.length > 30
+          ? rec.insertedText.slice(0, 30) + "..."
+          : rec.insertedText;
+      displayText = `+${ins}`;
+    } else {
+      displayText = "Change";
+    }
+
+    const isResolved = rec.status === "applied" || rec.status === "discarded";
+
+    // Recommendation badge styling
+    const recBadgeClass = {
+      accept: "rec-badge--accept",
+      reject: "rec-badge--reject",
+      leave_alone: "rec-badge--neutral",
+    }[rec.recommendation];
+
+    const recLabel = {
+      accept: "Accept ✓",
+      reject: "Reject ✗",
+      leave_alone: "Leave alone",
+    }[rec.recommendation];
+
+    return (
+      <div
+        key={rec.id || index}
+        data-rec-id={rec.id}
+        className={`rec-row rec-row--${rec.status}`}
+      >
+        {/* The change being reviewed */}
+        <button
+          type="button"
+          className="rec-change-link"
+          onClick={() => handleRecommendationClick(rec)}
+          title={rec.reason}
+        >
+          <span className="rec-change-text">{displayText}</span>
+        </button>
+
+        {/* AI recommendation badge */}
+        <span className={`rec-badge ${recBadgeClass}`}>{recLabel}</span>
+
+        {/* Reason tooltip/text */}
+        <span className="rec-reason" title={rec.reason}>
+          {rec.reason.length > 40
+            ? rec.reason.slice(0, 40) + "..."
+            : rec.reason}
+        </span>
+
+        {/* Action buttons */}
+        {!isResolved && (
+          <div className="rec-actions">
+            <button
+              type="button"
+              className="rec-apply-btn"
+              onClick={(e) => handleApply(e, rec)}
+              title={`Apply: ${rec.recommendation} this change`}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              className="rec-discard-btn"
+              onClick={(e) => handleDiscard(e, rec)}
+              title="Skip this recommendation"
+            >
+              Discard
+            </button>
+          </div>
+        )}
+
+        {/* Status badges for resolved items */}
+        {rec.status === "applied" && (
+          <span className="rec-status-badge rec-status-applied">Applied</span>
+        )}
+        {rec.status === "discarded" && (
+          <span className="rec-status-badge rec-status-discarded">
+            Discarded
+          </span>
+        )}
+      </div>
+    );
+  };
+
   const renderMessage = (message: ChatMessage) => {
     const edits = message.metadata?.edits;
+    const recommendations = message.metadata?.recommendations;
+    const isReviewMode = message.metadata?.isReviewMode;
     const hasEdits = edits && edits.length > 0;
+    const hasRecommendations = recommendations && recommendations.length > 0;
+
+    // Check if user message is a review mode request (show special styling)
+    const isUserReviewRequest = message.role === "user" && isReviewMode;
 
     return (
       <div
         key={message.id}
-        className={`chat-message chat-message--${message.role}`}
+        className={`chat-message chat-message--${message.role}${isUserReviewRequest ? " chat-message--review-request" : ""}`}
       >
         <div className="chat-message-header">
           <span className="chat-message-role">
@@ -245,6 +413,22 @@ export function AIChatPanel({
                 ? "AI"
                 : "System"}
           </span>
+          {isUserReviewRequest && (
+            <span className="review-mode-badge">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+              Review Mode
+            </span>
+          )}
           <span className="chat-message-time">
             {message.timestamp.toLocaleTimeString([], {
               hour: "2-digit",
@@ -286,6 +470,32 @@ export function AIChatPanel({
             </div>
             <div className="edits-list">
               {edits.map((edit, index) => renderEditLink(edit, index))}
+            </div>
+          </div>
+        )}
+
+        {hasRecommendations && (
+          <div className="chat-message-recommendations">
+            <div className="recs-header">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M9 11l3 3L22 4" />
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+              </svg>
+              Reviewed {recommendations.length} change
+              {recommendations.length !== 1 ? "s" : ""}
+              <span className="recs-hint">(Apply or Discard each)</span>
+            </div>
+            <div className="recs-list">
+              {recommendations.map((rec, index) =>
+                renderRecommendation(rec, index),
+              )}
             </div>
           </div>
         )}

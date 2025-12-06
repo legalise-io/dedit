@@ -8,7 +8,11 @@ import {
 } from "react";
 import { Editor } from "@tiptap/react";
 import { diffWords } from "diff";
-import type { ContextItem, ContextItemResolver } from "../lib/types";
+import type {
+  ContextItem,
+  ContextItemResolver,
+  TrackChangeRecommendation,
+} from "../lib/types";
 
 // Types for AI edits - individual word-level changes
 export interface AIEdit {
@@ -47,10 +51,14 @@ export interface ChatMessage {
   timestamp: Date;
   metadata?: {
     selectionContext?: SelectionContext;
-    // Edits associated with this message
+    // Edits associated with this message (edit mode)
     edits?: AIEdit[];
+    // Recommendations associated with this message (review mode)
+    recommendations?: TrackChangeRecommendation[];
     // Context items included with this message
     contextItems?: ContextItem[];
+    // Whether this was a review mode request
+    isReviewMode?: boolean;
   };
 }
 
@@ -126,7 +134,10 @@ export interface AIEditorState {
   setError: (error: string | null) => void;
 
   // Actions
-  sendPrompt: (prompt: string) => Promise<void>;
+  sendPrompt: (
+    prompt: string,
+    options?: { forceReviewMode?: boolean },
+  ) => Promise<void>;
   scrollToEdit: (edit: AIEdit) => void;
   goToEditAndSelect: (edit: AIEdit) => void;
 
@@ -145,6 +156,15 @@ export interface AIEditorState {
     trackChangeId: string,
     status: AIEdit["status"],
   ) => void;
+
+  // Review mode: apply/discard recommendations
+  applyRecommendation: (rec: TrackChangeRecommendation) => void;
+  discardRecommendation: (rec: TrackChangeRecommendation) => void;
+  getPendingRecommendations: () => TrackChangeRecommendation[];
+  getNextRecommendation: (
+    currentRec: TrackChangeRecommendation,
+  ) => TrackChangeRecommendation | null;
+  goToRecommendation: (rec: TrackChangeRecommendation) => void;
 
   // Context items for additional content in prompts
   contextItems: ContextItem[];
@@ -408,6 +428,234 @@ function computeDiff(
   }
 
   return changes;
+}
+
+/**
+ * Parse the /review command from a prompt.
+ * Returns the prompt text without the command prefix.
+ */
+function parseReviewCommand(prompt: string): {
+  isReviewCommand: boolean;
+  promptText: string;
+} {
+  const trimmed = prompt.trim();
+  const reviewMatch = trimmed.match(/^\/review\s*(.*)/i);
+
+  if (reviewMatch) {
+    return {
+      isReviewCommand: true,
+      promptText: reviewMatch[1] || "",
+    };
+  }
+
+  return {
+    isReviewCommand: false,
+    promptText: trimmed,
+  };
+}
+
+/**
+ * Pending track change with context for AI review.
+ */
+interface PendingTrackChange {
+  id: string;
+  type: "insertion" | "deletion";
+  text: string;
+  author: string | null;
+  date: string | null;
+  paragraphId: string;
+  before: string; // ~30 chars before
+  after: string; // ~30 chars after
+}
+
+/**
+ * Get all pending track changes within a given range.
+ * Groups adjacent deletion+insertion as pairs where applicable.
+ */
+function getPendingTrackChangesInScope(
+  editor: Editor,
+  from: number,
+  to: number,
+): PendingTrackChange[] {
+  const changes: PendingTrackChange[] = [];
+  const doc = editor.state.doc;
+  const seenIds = new Set<string>();
+
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (node.type.name === "paragraph") {
+      const paragraphId = node.attrs.id || "";
+      let offset = 0;
+
+      node.descendants((child, childPos) => {
+        if (child.isText && child.text) {
+          for (const mark of child.marks) {
+            if (
+              mark.type.name === "insertion" ||
+              mark.type.name === "deletion"
+            ) {
+              const markId = mark.attrs.id;
+              if (markId && !seenIds.has(markId)) {
+                seenIds.add(markId);
+
+                const absolutePos = pos + 1 + childPos;
+
+                // Get surrounding context
+                const beforeStart = Math.max(0, absolutePos - 30);
+                const afterEnd = Math.min(
+                  doc.content.size,
+                  absolutePos + child.text.length + 30,
+                );
+
+                const before = doc.textBetween(beforeStart, absolutePos, " ");
+                const after = doc.textBetween(
+                  absolutePos + child.text.length,
+                  afterEnd,
+                  " ",
+                );
+
+                changes.push({
+                  id: markId,
+                  type: mark.type.name as "insertion" | "deletion",
+                  text: child.text,
+                  author: mark.attrs.author || null,
+                  date: mark.attrs.date || null,
+                  paragraphId,
+                  before,
+                  after,
+                });
+              }
+            }
+          }
+          offset += child.text.length;
+        }
+        return true;
+      });
+    }
+    return true;
+  });
+
+  return changes;
+}
+
+/**
+ * Group adjacent deletions and insertions into paired changes.
+ * This presents "old → new" as a single recommendation.
+ */
+interface GroupedTrackChange {
+  deletionId?: string;
+  insertionId?: string;
+  deletedText: string;
+  insertedText: string;
+  author: string | null;
+  context: string;
+}
+
+function groupTrackChanges(
+  changes: PendingTrackChange[],
+): GroupedTrackChange[] {
+  const grouped: GroupedTrackChange[] = [];
+  const usedIds = new Set<string>();
+
+  // Sort by position in document (we'll use the order they appear)
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i];
+    if (usedIds.has(change.id)) continue;
+
+    if (change.type === "deletion") {
+      // Look for an adjacent insertion
+      const nextChange = changes[i + 1];
+      if (
+        nextChange &&
+        nextChange.type === "insertion" &&
+        !usedIds.has(nextChange.id)
+      ) {
+        // Paired change (replacement)
+        usedIds.add(change.id);
+        usedIds.add(nextChange.id);
+        grouped.push({
+          deletionId: change.id,
+          insertionId: nextChange.id,
+          deletedText: change.text,
+          insertedText: nextChange.text,
+          author: change.author || nextChange.author,
+          context: `...${change.before}[${change.text} → ${nextChange.text}]${nextChange.after}...`,
+        });
+      } else {
+        // Pure deletion
+        usedIds.add(change.id);
+        grouped.push({
+          deletionId: change.id,
+          deletedText: change.text,
+          insertedText: "",
+          author: change.author,
+          context: `...${change.before}[−${change.text}]${change.after}...`,
+        });
+      }
+    } else {
+      // Pure insertion
+      usedIds.add(change.id);
+      grouped.push({
+        insertionId: change.id,
+        deletedText: "",
+        insertedText: change.text,
+        author: change.author,
+        context: `...${change.before}[+${change.text}]${change.after}...`,
+      });
+    }
+  }
+
+  return grouped;
+}
+
+/**
+ * Build the system prompt for review mode.
+ */
+function buildReviewSystemPrompt(
+  groupedChanges: GroupedTrackChange[],
+  userCriteria: string,
+): string {
+  const changesForAI = groupedChanges.map((gc, idx) => ({
+    index: idx,
+    deletionId: gc.deletionId || null,
+    insertionId: gc.insertionId || null,
+    deletedText: gc.deletedText,
+    insertedText: gc.insertedText,
+    author: gc.author,
+    context: gc.context,
+  }));
+
+  return `You are an AI assistant helping to review track changes in a document.
+
+## Your Task
+Evaluate each pending track change and recommend whether to ACCEPT, REJECT, or LEAVE ALONE based on the user's criteria.
+
+## User's Criteria
+${userCriteria}
+
+## Response Format
+Respond with valid JSON matching this exact schema:
+{
+  "message": "Summary of your review",
+  "recommendations": [
+    {
+      "index": 0,
+      "recommendation": "accept",
+      "reason": "Brief explanation"
+    }
+  ]
+}
+
+## Guidelines
+- "accept" = Apply the change (keep inserted text, remove deleted text)
+- "reject" = Revert the change (restore deleted text, remove inserted text)
+- "leave_alone" = Uncertain or needs human judgment - skip this change
+- Provide a clear, concise reason for each recommendation
+- If a change doesn't match the user's criteria clearly, use "leave_alone"
+- The "index" must match the change index from the list below
+
+## Pending Track Changes
+${JSON.stringify(changesForAI, null, 2)}
+`;
 }
 
 /**
@@ -841,6 +1089,157 @@ export function AIEditorProvider({
     [],
   );
 
+  // Update recommendation status
+  const updateRecommendationStatus = useCallback(
+    (recId: string, status: TrackChangeRecommendation["status"]) => {
+      setMessages((prevMessages) =>
+        prevMessages.map((message) => {
+          if (!message.metadata?.recommendations) return message;
+          const updatedRecs = message.metadata.recommendations.map((rec) =>
+            rec.id === recId ? { ...rec, status } : rec,
+          );
+          return {
+            ...message,
+            metadata: { ...message.metadata, recommendations: updatedRecs },
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  // Get all pending recommendations from messages
+  const getPendingRecommendations =
+    useCallback((): TrackChangeRecommendation[] => {
+      const allRecs: TrackChangeRecommendation[] = [];
+      for (const message of messages) {
+        if (message.metadata?.recommendations) {
+          for (const rec of message.metadata.recommendations) {
+            if (rec.status === "pending") {
+              allRecs.push(rec);
+            }
+          }
+        }
+      }
+      return allRecs;
+    }, [messages]);
+
+  // Get the next recommendation after the current one
+  const getNextRecommendation = useCallback(
+    (
+      currentRec: TrackChangeRecommendation,
+    ): TrackChangeRecommendation | null => {
+      const allRecs = getPendingRecommendations();
+      const currentIndex = allRecs.findIndex((r) => r.id === currentRec.id);
+      if (currentIndex >= 0 && currentIndex < allRecs.length - 1) {
+        return allRecs[currentIndex + 1];
+      }
+      // If current was the last pending, find next pending from all recs
+      for (const message of messages) {
+        if (message.metadata?.recommendations) {
+          for (const rec of message.metadata.recommendations) {
+            if (rec.status === "pending" && rec.id !== currentRec.id) {
+              return rec;
+            }
+          }
+        }
+      }
+      return null;
+    },
+    [getPendingRecommendations, messages],
+  );
+
+  // Navigate to a recommendation in the editor
+  const goToRecommendation = useCallback((rec: TrackChangeRecommendation) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+
+    // Find the track change element by ID
+    const trackChangeId = rec.trackChangeId;
+    const editorDom = ed.view.dom;
+    const element = editorDom.querySelector(
+      `[data-insertion-id="${trackChangeId}"], [data-deletion-id="${trackChangeId}"]`,
+    );
+
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+
+      // Find its index among all track changes for the event
+      const allChanges = editorDom.querySelectorAll(
+        "ins[data-insertion-id], del[data-deletion-id]",
+      );
+      let targetIndex = -1;
+      allChanges.forEach((el, idx) => {
+        const id =
+          el.getAttribute("data-insertion-id") ||
+          el.getAttribute("data-deletion-id");
+        if (id === trackChangeId) {
+          targetIndex = idx;
+        }
+      });
+
+      if (targetIndex >= 0) {
+        window.dispatchEvent(
+          new CustomEvent("ai-select-change", {
+            detail: { index: targetIndex, changeId: trackChangeId },
+          }),
+        );
+      }
+    }
+  }, []);
+
+  // Apply a recommendation (execute the AI's suggested action)
+  const applyRecommendation = useCallback(
+    (rec: TrackChangeRecommendation) => {
+      const ed = editorRef.current;
+      if (!ed) return;
+
+      console.log("[applyRecommendation] Applying:", rec);
+
+      if (rec.recommendation === "accept") {
+        // Accept the track change
+        if (rec.trackChangeType === "insertion") {
+          ed.commands.acceptInsertion(rec.trackChangeId);
+        } else {
+          ed.commands.acceptDeletion(rec.trackChangeId);
+        }
+      } else if (rec.recommendation === "reject") {
+        // Reject the track change
+        if (rec.trackChangeType === "insertion") {
+          ed.commands.rejectInsertion(rec.trackChangeId);
+        } else {
+          ed.commands.rejectDeletion(rec.trackChangeId);
+        }
+      }
+      // "leave_alone" does nothing to the document
+
+      updateRecommendationStatus(rec.id, "applied");
+
+      // Auto-advance to next
+      const nextRec = getNextRecommendation(rec);
+      if (nextRec) {
+        setTimeout(() => goToRecommendation(nextRec), 100);
+      }
+    },
+    [updateRecommendationStatus, getNextRecommendation, goToRecommendation],
+  );
+
+  // Discard a recommendation (skip without action)
+  const discardRecommendation = useCallback(
+    (rec: TrackChangeRecommendation) => {
+      console.log("[discardRecommendation] Discarding:", rec);
+
+      updateRecommendationStatus(rec.id, "discarded");
+
+      // Auto-advance to next
+      const nextRec = getNextRecommendation(rec);
+      if (nextRec) {
+        setTimeout(() => goToRecommendation(nextRec), 100);
+      }
+    },
+    [updateRecommendationStatus, getNextRecommendation, goToRecommendation],
+  );
+
   // Accept a paired edit (both deletion and insertion)
   const acceptEdit = useCallback(
     (edit: AIEdit) => {
@@ -1144,7 +1543,7 @@ export function AIEditorProvider({
 
   // Send prompt to AI (either via custom handler or direct OpenAI)
   const sendPrompt = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, options?: { forceReviewMode?: boolean }) => {
       // Check if we have a way to make AI requests
       const hasCustomHandler = !!config.onAIRequest;
       if (!hasCustomHandler && !apiKey) {
@@ -1166,7 +1565,36 @@ export function AIEditorProvider({
       const selectedText = ed.state.doc.textBetween(from, to, " ");
       const hasSelection = from !== to && selectedText.length > 0;
 
-      // Check for track changes in selection
+      // Determine scope for track changes
+      const scopeFrom = hasSelection ? from : 0;
+      const scopeTo = hasSelection ? to : ed.state.doc.content.size;
+
+      // Get pending track changes in scope
+      const pendingTrackChanges = getPendingTrackChangesInScope(
+        ed,
+        scopeFrom,
+        scopeTo,
+      );
+      const hasTrackChanges = pendingTrackChanges.length > 0;
+
+      // Parse /review command from prompt
+      const { isReviewCommand, promptText } = parseReviewCommand(prompt);
+
+      // Review mode is ONLY enabled by explicit /review command (and requires pending changes)
+      const isReviewMode =
+        (isReviewCommand || options?.forceReviewMode) && hasTrackChanges;
+
+      // Use the cleaned prompt text (without /review prefix) for AI
+      const effectivePrompt = isReviewCommand ? promptText : prompt;
+
+      console.log("[sendPrompt] Mode:", isReviewMode ? "REVIEW" : "EDIT");
+      console.log("[sendPrompt] Review command detected:", isReviewCommand);
+      console.log(
+        "[sendPrompt] Pending track changes:",
+        pendingTrackChanges.length,
+      );
+
+      // Check for track changes in selection (for edit mode context)
       const trackChangesContext = hasSelection
         ? getTrackChangesContext(ed, from, to)
         : undefined;
@@ -1181,17 +1609,13 @@ export function AIEditorProvider({
         );
       }
 
-      // Build indexed document for AI
+      // Build indexed document for AI (used in edit mode)
       const { document: indexedDocument, paragraphs } =
         buildIndexedDocument(ed);
       paragraphMapRef.current = paragraphs;
 
-      console.log(
-        "[sendPrompt] Indexed document:",
-        indexedDocument.substring(0, 500) + "...",
-      );
-
       // Add user message with context items
+      // Show the original prompt (with /review) so user sees what they typed
       addMessage({
         role: "user",
         content: prompt,
@@ -1202,106 +1626,69 @@ export function AIEditorProvider({
             to,
             hasSelection,
           },
-          // Store context items in the message for chat history
           contextItems: contextItems.length > 0 ? [...contextItems] : undefined,
+          isReviewMode,
         },
       });
 
       try {
-        let aiResponse: AIResponse;
+        if (isReviewMode) {
+          // ========== REVIEW MODE ==========
+          console.log("[sendPrompt] Entering review mode");
 
-        if (config.onAIRequest) {
-          // Use custom handler (backend proxy mode)
-          console.log("[sendPrompt] Using custom onAIRequest handler");
+          // Group track changes (pair adjacent deletion+insertion)
+          const groupedChanges = groupTrackChanges(pendingTrackChanges);
+          console.log("[sendPrompt] Grouped changes:", groupedChanges.length);
 
-          // Build request for custom handler
-          const paragraphArray = Array.from(paragraphs.values()).map((p) => ({
-            id: p.id,
-            text: p.text,
-          }));
-
-          const request: AIEditRequest = {
-            prompt,
-            paragraphs: paragraphArray,
-            selection: hasSelection
-              ? { text: selectedText, hasSelection: true }
-              : undefined,
-            contextItems: contextItems.length > 0 ? contextItems : undefined,
-          };
-
-          const response = await config.onAIRequest(request);
-          aiResponse = {
-            message: response.message,
-            edits: response.edits.map((e) => ({
-              paragraphId: e.paragraphId,
-              newText: e.newText,
-              reason: e.reason,
-            })),
-          };
-
-          console.log(
-            "[sendPrompt] Custom handler response - message:",
-            aiResponse.message?.substring(0, 100),
+          // Build review system prompt (use effectivePrompt without /review prefix)
+          const reviewPrompt = buildReviewSystemPrompt(
+            groupedChanges,
+            effectivePrompt,
           );
           console.log(
-            "[sendPrompt] Custom handler response - edits:",
-            aiResponse.edits?.length || 0,
-          );
-        } else {
-          // Direct OpenAI API mode
-          console.log("[sendPrompt] Using direct OpenAI API");
-
-          // Build system prompt
-          const systemPrompt = buildSystemPrompt(
-            indexedDocument,
-            hasSelection,
-            selectedText,
-            contextItems,
-            trackChangesContext,
+            "[sendPrompt] Review prompt:\n",
+            reviewPrompt.substring(0, 500) + "...",
           );
 
-          console.log("[sendPrompt] Full system prompt:\n", systemPrompt);
-
-          // Define JSON schema for structured output
-          const responseSchema = {
+          // Define JSON schema for review response
+          const reviewSchema = {
             type: "json_schema",
             json_schema: {
-              name: "ai_edit_response",
+              name: "ai_review_response",
               strict: true,
               schema: {
                 type: "object",
                 properties: {
                   message: {
                     type: "string",
-                    description: "Response message explaining what was done",
+                    description: "Summary of the review",
                   },
-                  edits: {
+                  recommendations: {
                     type: "array",
-                    description:
-                      "Array of paragraph edits (empty if no changes needed)",
                     items: {
                       type: "object",
                       properties: {
-                        paragraphId: {
-                          type: "string",
-                          description: "The UUID of the paragraph to edit",
+                        index: {
+                          type: "number",
+                          description: "Index of the change being evaluated",
                         },
-                        newText: {
+                        recommendation: {
                           type: "string",
-                          description:
-                            "The complete new text for the paragraph",
+                          enum: ["accept", "reject", "leave_alone"],
+                          description: "The recommended action",
                         },
                         reason: {
                           type: "string",
-                          description: "Brief explanation of what was changed",
+                          description:
+                            "Brief explanation for this recommendation",
                         },
                       },
-                      required: ["paragraphId", "newText", "reason"],
+                      required: ["index", "recommendation", "reason"],
                       additionalProperties: false,
                     },
                   },
                 },
-                required: ["message", "edits"],
+                required: ["message", "recommendations"],
                 additionalProperties: false,
               },
             },
@@ -1316,14 +1703,14 @@ export function AIEditorProvider({
                 Authorization: `Bearer ${apiKey}`,
               },
               body: JSON.stringify({
-                model: config.aiModel || "gpt-4.1-mini",
+                model: config.aiModel || "gpt-5-mini",
                 messages: [
-                  { role: "system", content: systemPrompt },
-                  { role: "user", content: prompt },
+                  { role: "system", content: reviewPrompt },
+                  { role: "user", content: effectivePrompt },
                 ],
                 temperature: config.aiTemperature ?? 1.0,
                 max_completion_tokens: 16384,
-                response_format: responseSchema,
+                response_format: reviewSchema,
               }),
             },
           );
@@ -1339,57 +1726,259 @@ export function AIEditorProvider({
           const data = await response.json();
           const assistantContent = data.choices?.[0]?.message?.content || "{}";
           console.log(
-            "[sendPrompt] Raw response:",
+            "[sendPrompt] Review response:",
             assistantContent.substring(0, 500) + "...",
           );
 
-          // Parse the JSON response
+          // Parse review response
+          let reviewResponse: {
+            message: string;
+            recommendations: Array<{
+              index: number;
+              recommendation: "accept" | "reject" | "leave_alone";
+              reason: string;
+            }>;
+          };
+
           try {
-            aiResponse = JSON.parse(assistantContent);
+            reviewResponse = JSON.parse(assistantContent);
+          } catch (parseErr) {
+            console.error("[sendPrompt] Review JSON parse failed:", parseErr);
+            reviewResponse = { message: assistantContent, recommendations: [] };
+          }
+
+          // Convert AI recommendations to TrackChangeRecommendation objects
+          const recommendations: TrackChangeRecommendation[] = [];
+          for (const rec of reviewResponse.recommendations) {
+            const grouped = groupedChanges[rec.index];
+            if (!grouped) {
+              console.warn(
+                `[sendPrompt] Invalid recommendation index: ${rec.index}`,
+              );
+              continue;
+            }
+
+            // Determine the primary track change ID and type
+            // For paired changes, we'll use the deletion ID as primary
+            const trackChangeId =
+              grouped.deletionId || grouped.insertionId || "";
+            const trackChangeType: "insertion" | "deletion" = grouped.deletionId
+              ? "deletion"
+              : "insertion";
+
+            recommendations.push({
+              id: `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              trackChangeId,
+              trackChangeType,
+              deletedText: grouped.deletedText,
+              insertedText: grouped.insertedText,
+              recommendation: rec.recommendation,
+              reason: rec.reason,
+              status: "pending",
+              author: grouped.author,
+            });
+          }
+
+          console.log(
+            `[sendPrompt] Created ${recommendations.length} recommendations`,
+          );
+
+          // Add assistant message with recommendations
+          addMessage({
+            role: "assistant",
+            content: reviewResponse.message || "Review complete.",
+            metadata: {
+              recommendations:
+                recommendations.length > 0 ? recommendations : undefined,
+              isReviewMode: true,
+            },
+          });
+
+          // Navigate to first recommendation
+          if (recommendations.length > 0) {
+            setTimeout(() => goToRecommendation(recommendations[0]), 200);
+          }
+        } else {
+          // ========== EDIT MODE (existing behavior) ==========
+          let aiResponse: AIResponse;
+
+          if (config.onAIRequest) {
+            // Use custom handler (backend proxy mode)
+            console.log("[sendPrompt] Using custom onAIRequest handler");
+
+            const paragraphArray = Array.from(paragraphs.values()).map((p) => ({
+              id: p.id,
+              text: p.text,
+            }));
+
+            const request: AIEditRequest = {
+              prompt,
+              paragraphs: paragraphArray,
+              selection: hasSelection
+                ? { text: selectedText, hasSelection: true }
+                : undefined,
+              contextItems: contextItems.length > 0 ? contextItems : undefined,
+            };
+
+            const response = await config.onAIRequest(request);
+            aiResponse = {
+              message: response.message,
+              edits: response.edits.map((e) => ({
+                paragraphId: e.paragraphId,
+                newText: e.newText,
+                reason: e.reason,
+              })),
+            };
+
             console.log(
-              "[sendPrompt] Parsed - message:",
+              "[sendPrompt] Custom handler response - message:",
               aiResponse.message?.substring(0, 100),
             );
             console.log(
-              "[sendPrompt] Parsed - edits:",
+              "[sendPrompt] Custom handler response - edits:",
               aiResponse.edits?.length || 0,
             );
-          } catch (parseErr) {
-            console.error("[sendPrompt] JSON parse failed:", parseErr);
-            aiResponse = { message: assistantContent, edits: [] };
-          }
-        }
+          } else {
+            // Direct OpenAI API mode
+            console.log("[sendPrompt] Using direct OpenAI API");
 
-        // Apply edits as track changes and get word-level AIEdit objects
-        let processedEdits: AIEdit[] = [];
-        if (aiResponse.edits && aiResponse.edits.length > 0) {
-          try {
-            // Pass paragraph edits directly to applyEditsAsTrackChanges
-            // It will compute diffs and return word-level AIEdit objects
-            processedEdits = applyEditsAsTrackChanges(
-              aiResponse.edits,
-              config.aiAuthorName || "AI",
+            const systemPrompt = buildSystemPrompt(
+              indexedDocument,
+              hasSelection,
+              selectedText,
+              contextItems,
+              trackChangesContext,
             );
+
+            console.log("[sendPrompt] Full system prompt:\n", systemPrompt);
+
+            const responseSchema = {
+              type: "json_schema",
+              json_schema: {
+                name: "ai_edit_response",
+                strict: true,
+                schema: {
+                  type: "object",
+                  properties: {
+                    message: {
+                      type: "string",
+                      description: "Response message explaining what was done",
+                    },
+                    edits: {
+                      type: "array",
+                      description:
+                        "Array of paragraph edits (empty if no changes needed)",
+                      items: {
+                        type: "object",
+                        properties: {
+                          paragraphId: {
+                            type: "string",
+                            description: "The UUID of the paragraph to edit",
+                          },
+                          newText: {
+                            type: "string",
+                            description:
+                              "The complete new text for the paragraph",
+                          },
+                          reason: {
+                            type: "string",
+                            description:
+                              "Brief explanation of what was changed",
+                          },
+                        },
+                        required: ["paragraphId", "newText", "reason"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["message", "edits"],
+                  additionalProperties: false,
+                },
+              },
+            };
+
+            const response = await fetch(
+              "https://api.openai.com/v1/chat/completions",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                  model: config.aiModel || "gpt-5-mini",
+                  messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: prompt },
+                  ],
+                  temperature: config.aiTemperature ?? 1.0,
+                  max_completion_tokens: 16384,
+                  response_format: responseSchema,
+                }),
+              },
+            );
+
+            if (!response.ok) {
+              const errorData = await response.json().catch(() => ({}));
+              throw new Error(
+                errorData.error?.message ||
+                  `API request failed: ${response.status}`,
+              );
+            }
+
+            const data = await response.json();
+            const assistantContent =
+              data.choices?.[0]?.message?.content || "{}";
             console.log(
-              `[sendPrompt] Applied ${aiResponse.edits.length} paragraph edits, got ${processedEdits.length} word-level edits`,
+              "[sendPrompt] Raw response:",
+              assistantContent.substring(0, 500) + "...",
             );
-          } catch (applyErr) {
-            console.error("[sendPrompt] Error applying edits:", applyErr);
-          }
-        }
 
-        // Add assistant message
-        console.log(
-          "[sendPrompt] Adding message:",
-          aiResponse.message?.substring(0, 100),
-        );
-        addMessage({
-          role: "assistant",
-          content: aiResponse.message || "No message provided",
-          metadata: {
-            edits: processedEdits.length > 0 ? processedEdits : undefined,
-          },
-        });
+            try {
+              aiResponse = JSON.parse(assistantContent);
+              console.log(
+                "[sendPrompt] Parsed - message:",
+                aiResponse.message?.substring(0, 100),
+              );
+              console.log(
+                "[sendPrompt] Parsed - edits:",
+                aiResponse.edits?.length || 0,
+              );
+            } catch (parseErr) {
+              console.error("[sendPrompt] JSON parse failed:", parseErr);
+              aiResponse = { message: assistantContent, edits: [] };
+            }
+          }
+
+          // Apply edits as track changes and get word-level AIEdit objects
+          let processedEdits: AIEdit[] = [];
+          if (aiResponse.edits && aiResponse.edits.length > 0) {
+            try {
+              processedEdits = applyEditsAsTrackChanges(
+                aiResponse.edits,
+                config.aiAuthorName || "AI",
+              );
+              console.log(
+                `[sendPrompt] Applied ${aiResponse.edits.length} paragraph edits, got ${processedEdits.length} word-level edits`,
+              );
+            } catch (applyErr) {
+              console.error("[sendPrompt] Error applying edits:", applyErr);
+            }
+          }
+
+          // Add assistant message
+          console.log(
+            "[sendPrompt] Adding message:",
+            aiResponse.message?.substring(0, 100),
+          );
+          addMessage({
+            role: "assistant",
+            content: aiResponse.message || "No message provided",
+            metadata: {
+              edits: processedEdits.length > 0 ? processedEdits : undefined,
+            },
+          });
+        }
       } catch (err) {
         const errorMessage =
           err instanceof Error ? err.message : "An error occurred";
@@ -1402,7 +1991,14 @@ export function AIEditorProvider({
         setIsLoading(false);
       }
     },
-    [apiKey, addMessage, applyEditsAsTrackChanges, config, contextItems],
+    [
+      apiKey,
+      addMessage,
+      applyEditsAsTrackChanges,
+      config,
+      contextItems,
+      goToRecommendation,
+    ],
   );
 
   const value: AIEditorState = {
@@ -1428,6 +2024,11 @@ export function AIEditorProvider({
     getPendingEdits,
     getNextEdit,
     updateEditStatusByTrackChangeId,
+    applyRecommendation,
+    discardRecommendation,
+    getPendingRecommendations,
+    getNextRecommendation,
+    goToRecommendation,
     contextItems,
     addContextItem,
     addContextItems,

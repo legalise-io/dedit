@@ -47,6 +47,30 @@ export interface TrackedChange {
 }
 
 /**
+ * AI's recommendation for an existing track change (used in review mode)
+ */
+export interface TrackChangeRecommendation {
+  /** Unique recommendation ID */
+  id: string;
+  /** ID of the track change being evaluated */
+  trackChangeId: string;
+  /** Type of the track change */
+  trackChangeType: "insertion" | "deletion";
+  /** Original text (what was removed) */
+  deletedText: string;
+  /** New text (what was added) */
+  insertedText: string;
+  /** AI's recommendation */
+  recommendation: "accept" | "reject" | "leave_alone";
+  /** AI's reasoning for this recommendation */
+  reason: string;
+  /** Current status of the recommendation */
+  status: "pending" | "applied" | "discarded";
+  /** Author of the track change */
+  author?: string | null;
+}
+
+/**
  * Selection range for comments
  */
 export interface SelectionRange {

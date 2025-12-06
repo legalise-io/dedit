@@ -65,6 +65,7 @@ export type {
 
   // Track changes types
   TrackedChange,
+  TrackChangeRecommendation,
   TrackChangesConfig,
 
   // Comments config
