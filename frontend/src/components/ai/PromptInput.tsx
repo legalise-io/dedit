@@ -35,29 +35,6 @@ const SLASH_COMMANDS: SlashCommand[] = [
 ];
 
 /**
- * Parse prompt to detect completed /command prefix.
- */
-function parsePromptCommand(prompt: string): {
-  isReviewCommand: boolean;
-  promptText: string;
-} {
-  const trimmed = prompt.trim();
-  const reviewMatch = trimmed.match(/^\/review\s+(.*)/i);
-
-  if (reviewMatch) {
-    return {
-      isReviewCommand: true,
-      promptText: reviewMatch[1] || "",
-    };
-  }
-
-  return {
-    isReviewCommand: false,
-    promptText: trimmed,
-  };
-}
-
-/**
  * Check if user is typing a slash command (starts with / but not yet complete)
  */
 function getSlashCommandState(prompt: string): {
@@ -65,7 +42,6 @@ function getSlashCommandState(prompt: string): {
   partialCommand: string;
   matchingCommands: SlashCommand[];
 } {
-  // Check if prompt starts with / and cursor is still in command portion
   const match = prompt.match(/^\/(\w*)$/);
 
   if (match) {
@@ -90,14 +66,8 @@ function getSlashCommandState(prompt: string): {
 /**
  * PromptInput - A separable component for entering AI prompts
  *
- * This component automatically detects whether to apply targeted or global edits
- * based on whether the user has selected text in the editor.
- *
- * - If text is selected: AI will target that specific text
- * - If no selection: AI will apply changes globally or answer questions
- *
  * Supports slash commands like /review for special modes.
- * Type "/" to see available commands.
+ * Type "/" to see available commands. Commands appear as pills that delete as a unit.
  */
 export function PromptInput({
   className = "",
@@ -115,23 +85,22 @@ export function PromptInput({
     removeContextItem,
     resolveContextItems,
   } = useAIEditor();
-  const [prompt, setPrompt] = useState("");
-  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Active command (as a pill) - null means no command selected
+  const [activeCommand, setActiveCommand] = useState<SlashCommand | null>(null);
+  // Text input (separate from command)
+  const [inputText, setInputText] = useState("");
+  // For autocomplete menu
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+  const [isDragOver, setIsDragOver] = useState(false);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Parse the prompt for completed commands
-  const { isReviewCommand } = useMemo(
-    () => parsePromptCommand(prompt),
-    [prompt],
-  );
 
   // Check if user is typing a slash command
   const { isTypingCommand, matchingCommands } = useMemo(
-    () => getSlashCommandState(prompt),
-    [prompt],
+    () => getSlashCommandState(inputText),
+    [inputText],
   );
 
   // Reset selection when commands change
@@ -139,7 +108,7 @@ export function PromptInput({
     setSelectedCommandIndex(0);
   }, [matchingCommands.length]);
 
-  // Check if drag/drop is enabled (resolver is configured)
+  // Check if drag/drop is enabled
   const isDragDropEnabled = !!config.onResolveContextItems;
 
   // Auto-resize textarea
@@ -149,32 +118,54 @@ export function PromptInput({
       textarea.style.height = "auto";
       textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
     }
-  }, [prompt]);
+  }, [inputText]);
 
-  // Check if we can send prompts (either have API key or custom handler)
+  // Check if we can send prompts
   const canSendPrompts = apiKey || config.onAIRequest;
 
-  // Complete the selected command
+  // Complete the selected command - sets it as active pill
   const completeCommand = useCallback((command: SlashCommand) => {
-    setPrompt(`/${command.name} `);
+    setActiveCommand(command);
+    setInputText("");
     setSelectedCommandIndex(0);
+    textareaRef.current?.focus();
+  }, []);
+
+  // Remove the active command pill
+  const removeCommand = useCallback(() => {
+    setActiveCommand(null);
     textareaRef.current?.focus();
   }, []);
 
   const handleSubmit = useCallback(
     async (e?: React.FormEvent) => {
       e?.preventDefault();
-      if (!prompt.trim() || isLoading || !canSendPrompts) return;
+      if (!inputText.trim() && !activeCommand) return;
+      if (isLoading || !canSendPrompts) return;
 
-      // Send with review flag if /review command was used
-      await sendPrompt(prompt.trim(), { forceReviewMode: isReviewCommand });
-      setPrompt("");
+      // Build the full prompt
+      const fullPrompt = activeCommand
+        ? `/${activeCommand.name} ${inputText.trim()}`
+        : inputText.trim();
+
+      const isReviewMode = activeCommand?.name === "review";
+
+      await sendPrompt(fullPrompt, { forceReviewMode: isReviewMode });
+      setInputText("");
+      setActiveCommand(null);
     },
-    [prompt, isLoading, canSendPrompts, sendPrompt, isReviewCommand],
+    [inputText, activeCommand, isLoading, canSendPrompts, sendPrompt],
   );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // Handle backspace on empty input to remove command pill
+      if (e.key === "Backspace" && inputText === "" && activeCommand) {
+        e.preventDefault();
+        removeCommand();
+        return;
+      }
+
       // Handle command menu navigation
       if (isTypingCommand && matchingCommands.length > 0) {
         if (e.key === "ArrowDown") {
@@ -198,7 +189,7 @@ export function PromptInput({
         }
         if (e.key === "Escape") {
           e.preventDefault();
-          setPrompt("");
+          setInputText("");
           return;
         }
       }
@@ -210,10 +201,13 @@ export function PromptInput({
       }
     },
     [
+      inputText,
+      activeCommand,
       isTypingCommand,
       matchingCommands,
       selectedCommandIndex,
       completeCommand,
+      removeCommand,
       handleSubmit,
     ],
   );
@@ -279,6 +273,12 @@ export function PromptInput({
 
     if (!canSendPrompts) {
       return "Enter your OpenAI API key first...";
+    }
+
+    if (activeCommand) {
+      return activeCommand.name === "review"
+        ? "Enter criteria (e.g., accept grammar fixes, reject style changes)..."
+        : "Enter instructions...";
     }
 
     if (selectionContext.hasSelection) {
@@ -389,7 +389,7 @@ export function PromptInput({
         <div className="prompt-input-wrapper">
           {/* Slash command autocomplete menu */}
           {isTypingCommand && matchingCommands.length > 0 && (
-            <div ref={menuRef} className="slash-command-menu">
+            <div className="slash-command-menu">
               {matchingCommands.map((cmd, index) => (
                 <button
                   key={cmd.name}
@@ -409,11 +409,24 @@ export function PromptInput({
             </div>
           )}
 
+          {/* Active command pill */}
+          {activeCommand && (
+            <button
+              type="button"
+              className="command-pill"
+              onClick={removeCommand}
+              title="Click or backspace to remove"
+            >
+              <span className="command-pill-icon">{activeCommand.icon}</span>
+              <span className="command-pill-name">/{activeCommand.name}</span>
+            </button>
+          )}
+
           <textarea
             ref={textareaRef}
             className="prompt-textarea"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={getPlaceholder()}
             disabled={isLoading || !canSendPrompts}
@@ -422,7 +435,11 @@ export function PromptInput({
           <button
             type="submit"
             className="prompt-submit-btn"
-            disabled={!prompt.trim() || isLoading || !canSendPrompts}
+            disabled={
+              (!inputText.trim() && !activeCommand) ||
+              isLoading ||
+              !canSendPrompts
+            }
             title="Send prompt"
           >
             {isLoading ? (

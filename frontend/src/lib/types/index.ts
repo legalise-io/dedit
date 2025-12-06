@@ -47,18 +47,18 @@ export interface TrackedChange {
 }
 
 /**
- * AI's recommendation for an existing track change (used in review mode)
+ * AI's recommendation for a contiguous block of track changes (used in review mode)
  */
 export interface TrackChangeRecommendation {
   /** Unique recommendation ID */
   id: string;
-  /** ID of the track change being evaluated */
-  trackChangeId: string;
-  /** Type of the track change */
-  trackChangeType: "insertion" | "deletion";
-  /** Original text (what was removed) */
+  /** IDs of deletion marks in this block */
+  deletionIds: string[];
+  /** IDs of insertion marks in this block */
+  insertionIds: string[];
+  /** Combined deleted text */
   deletedText: string;
-  /** New text (what was added) */
+  /** Combined inserted text */
   insertedText: string;
   /** AI's recommendation */
   recommendation: "accept" | "reject" | "leave_alone";

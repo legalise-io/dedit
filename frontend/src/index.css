@@ -2490,3 +2490,69 @@ del.selected-change,
     border-radius: 3px;
     box-shadow: 0 1px 1px rgba(0, 0, 0, 0.05);
 }
+
+/* Prompt input wrapper - contains pill and textarea */
+.prompt-input-wrapper {
+    display: flex;
+    align-items: flex-start;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: white;
+    padding: 8px 12px;
+    gap: 4px;
+}
+
+.prompt-input-wrapper:focus-within {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
+}
+
+/* Command pill - inline inside text input */
+.command-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px;
+    background: #f3e8ff;
+    border: none;
+    border-radius: 3px;
+    color: #7c3aed;
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.command-pill:hover {
+    background: #ede9fe;
+}
+
+.command-pill-icon {
+    display: flex;
+    align-items: center;
+}
+
+.command-pill-icon svg {
+    width: 12px;
+    height: 12px;
+}
+
+.command-pill-name {
+    font-weight: 500;
+}
+
+/* Textarea inside wrapper - no border */
+.prompt-input-wrapper .prompt-textarea {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    resize: none;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 0;
+    margin: 0;
+}
+
+.prompt-input-wrapper .prompt-textarea::placeholder {
+    color: #9ca3af;
+}

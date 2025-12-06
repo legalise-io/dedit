@@ -464,13 +464,12 @@ interface PendingTrackChange {
   author: string | null;
   date: string | null;
   paragraphId: string;
-  before: string; // ~30 chars before
-  after: string; // ~30 chars after
+  pos: number; // absolute position in document
+  endPos: number; // end position
 }
 
 /**
  * Get all pending track changes within a given range.
- * Groups adjacent deletion+insertion as pairs where applicable.
  */
 function getPendingTrackChangesInScope(
   editor: Editor,
@@ -484,7 +483,6 @@ function getPendingTrackChangesInScope(
   doc.nodesBetween(from, to, (node, pos) => {
     if (node.type.name === "paragraph") {
       const paragraphId = node.attrs.id || "";
-      let offset = 0;
 
       node.descendants((child, childPos) => {
         if (child.isText && child.text) {
@@ -499,20 +497,6 @@ function getPendingTrackChangesInScope(
 
                 const absolutePos = pos + 1 + childPos;
 
-                // Get surrounding context
-                const beforeStart = Math.max(0, absolutePos - 30);
-                const afterEnd = Math.min(
-                  doc.content.size,
-                  absolutePos + child.text.length + 30,
-                );
-
-                const before = doc.textBetween(beforeStart, absolutePos, " ");
-                const after = doc.textBetween(
-                  absolutePos + child.text.length,
-                  afterEnd,
-                  " ",
-                );
-
                 changes.push({
                   id: markId,
                   type: mark.type.name as "insertion" | "deletion",
@@ -520,13 +504,12 @@ function getPendingTrackChangesInScope(
                   author: mark.attrs.author || null,
                   date: mark.attrs.date || null,
                   paragraphId,
-                  before,
-                  after,
+                  pos: absolutePos,
+                  endPos: absolutePos + child.text.length,
                 });
               }
             }
           }
-          offset += child.text.length;
         }
         return true;
       });
@@ -538,70 +521,75 @@ function getPendingTrackChangesInScope(
 }
 
 /**
- * Group adjacent deletions and insertions into paired changes.
- * This presents "old → new" as a single recommendation.
+ * Group contiguous track changes into blocks.
+ * All adjacent changes (no unchanged text between them) become one decision.
  */
 interface GroupedTrackChange {
-  deletionId?: string;
-  insertionId?: string;
+  // All deletion IDs in this block
+  deletionIds: string[];
+  // All insertion IDs in this block
+  insertionIds: string[];
+  // Combined deleted text
   deletedText: string;
+  // Combined inserted text
   insertedText: string;
   author: string | null;
-  context: string;
 }
 
 function groupTrackChanges(
   changes: PendingTrackChange[],
 ): GroupedTrackChange[] {
+  if (changes.length === 0) return [];
+
+  // Sort by position
+  const sorted = [...changes].sort((a, b) => a.pos - b.pos);
+
   const grouped: GroupedTrackChange[] = [];
-  const usedIds = new Set<string>();
 
-  // Sort by position in document (we'll use the order they appear)
-  for (let i = 0; i < changes.length; i++) {
-    const change = changes[i];
-    if (usedIds.has(change.id)) continue;
+  let currentBlock: GroupedTrackChange = {
+    deletionIds: [],
+    insertionIds: [],
+    deletedText: "",
+    insertedText: "",
+    author: null,
+  };
+  let blockEndPos = -1;
 
-    if (change.type === "deletion") {
-      // Look for an adjacent insertion
-      const nextChange = changes[i + 1];
-      if (
-        nextChange &&
-        nextChange.type === "insertion" &&
-        !usedIds.has(nextChange.id)
-      ) {
-        // Paired change (replacement)
-        usedIds.add(change.id);
-        usedIds.add(nextChange.id);
-        grouped.push({
-          deletionId: change.id,
-          insertionId: nextChange.id,
-          deletedText: change.text,
-          insertedText: nextChange.text,
-          author: change.author || nextChange.author,
-          context: `...${change.before}[${change.text} → ${nextChange.text}]${nextChange.after}...`,
-        });
-      } else {
-        // Pure deletion
-        usedIds.add(change.id);
-        grouped.push({
-          deletionId: change.id,
-          deletedText: change.text,
-          insertedText: "",
-          author: change.author,
-          context: `...${change.before}[−${change.text}]${change.after}...`,
-        });
-      }
-    } else {
-      // Pure insertion
-      usedIds.add(change.id);
-      grouped.push({
-        insertionId: change.id,
+  for (const change of sorted) {
+    // If there's a gap, start a new block
+    if (blockEndPos !== -1 && change.pos > blockEndPos) {
+      grouped.push(currentBlock);
+      currentBlock = {
+        deletionIds: [],
+        insertionIds: [],
         deletedText: "",
-        insertedText: change.text,
-        author: change.author,
-        context: `...${change.before}[+${change.text}]${change.after}...`,
-      });
+        insertedText: "",
+        author: null,
+      };
     }
+
+    // Add to current block
+    if (change.type === "deletion") {
+      currentBlock.deletionIds.push(change.id);
+      currentBlock.deletedText += change.text;
+    } else {
+      currentBlock.insertionIds.push(change.id);
+      currentBlock.insertedText += change.text;
+    }
+    if (!currentBlock.author) {
+      currentBlock.author = change.author;
+    }
+
+    // Track furthest end position
+    blockEndPos = Math.max(blockEndPos, change.endPos);
+  }
+
+  // Push final block
+  if (
+    currentBlock.deletionIds.length > 0 ||
+    currentBlock.insertionIds.length > 0
+  ) {
+    grouped.push(currentBlock);
   }
 
   return grouped;
@@ -614,47 +602,25 @@ function buildReviewSystemPrompt(
   groupedChanges: GroupedTrackChange[],
   userCriteria: string,
 ): string {
-  const changesForAI = groupedChanges.map((gc, idx) => ({
-    index: idx,
-    deletionId: gc.deletionId || null,
-    insertionId: gc.insertionId || null,
-    deletedText: gc.deletedText,
-    insertedText: gc.insertedText,
-    author: gc.author,
-    context: gc.context,
-  }));
+  // Plain text format - one line per change
+  const changesText = groupedChanges
+    .map((gc, idx) => {
+      if (gc.deletedText && gc.insertedText) {
+        return `[${idx}] "${gc.deletedText}" → "${gc.insertedText}"`;
+      } else if (gc.deletedText) {
+        return `[${idx}] deleted "${gc.deletedText}"`;
+      } else {
+        return `[${idx}] inserted "${gc.insertedText}"`;
+      }
+    })
+    .join("\n");
 
-  return `You are an AI assistant helping to review track changes in a document.
+  return `Review these track changes. For each, recommend: accept, reject, or leave_alone.
 
-## Your Task
-Evaluate each pending track change and recommend whether to ACCEPT, REJECT, or LEAVE ALONE based on the user's criteria.
+User criteria: ${userCriteria}
 
-## User's Criteria
-${userCriteria}
-
-## Response Format
-Respond with valid JSON matching this exact schema:
-{
-  "message": "Summary of your review",
-  "recommendations": [
-    {
-      "index": 0,
-      "recommendation": "accept",
-      "reason": "Brief explanation"
-    }
-  ]
-}
-
-## Guidelines
-- "accept" = Apply the change (keep inserted text, remove deleted text)
-- "reject" = Revert the change (restore deleted text, remove inserted text)
-- "leave_alone" = Uncertain or needs human judgment - skip this change
-- Provide a clear, concise reason for each recommendation
-- If a change doesn't match the user's criteria clearly, use "leave_alone"
-- The "index" must match the change index from the list below
-
-## Pending Track Changes
-${JSON.stringify(changesForAI, null, 2)}
+Changes:
+${changesText}
 `;
 }
 
@@ -1154,11 +1120,13 @@ export function AIEditorProvider({
     const ed = editorRef.current;
     if (!ed) return;
 
-    // Find the track change element by ID
-    const trackChangeId = rec.trackChangeId;
+    // Find the first track change element in this block
+    const firstId = rec.deletionIds[0] || rec.insertionIds[0];
+    if (!firstId) return;
+
     const editorDom = ed.view.dom;
     const element = editorDom.querySelector(
-      `[data-insertion-id="${trackChangeId}"], [data-deletion-id="${trackChangeId}"]`,
+      `[data-insertion-id="${firstId}"], [data-deletion-id="${firstId}"]`,
     );
 
     if (element) {
@@ -1173,7 +1141,7 @@ export function AIEditorProvider({
         const id =
           el.getAttribute("data-insertion-id") ||
           el.getAttribute("data-deletion-id");
-        if (id === trackChangeId) {
+        if (id === firstId) {
           targetIndex = idx;
         }
       });
@@ -1181,7 +1149,7 @@ export function AIEditorProvider({
       if (targetIndex >= 0) {
         window.dispatchEvent(
           new CustomEvent("ai-select-change", {
-            detail: { index: targetIndex, changeId: trackChangeId },
+            detail: { index: targetIndex, changeId: firstId },
           }),
         );
       }
@@ -1197,18 +1165,20 @@ export function AIEditorProvider({
       console.log("[applyRecommendation] Applying:", rec);
 
       if (rec.recommendation === "accept") {
-        // Accept the track change
-        if (rec.trackChangeType === "insertion") {
-          ed.commands.acceptInsertion(rec.trackChangeId);
-        } else {
-          ed.commands.acceptDeletion(rec.trackChangeId);
+        // Accept all track changes in this block
+        for (const id of rec.deletionIds) {
+          ed.commands.acceptDeletion(id);
+        }
+        for (const id of rec.insertionIds) {
+          ed.commands.acceptInsertion(id);
         }
       } else if (rec.recommendation === "reject") {
-        // Reject the track change
-        if (rec.trackChangeType === "insertion") {
-          ed.commands.rejectInsertion(rec.trackChangeId);
-        } else {
-          ed.commands.rejectDeletion(rec.trackChangeId);
+        // Reject all track changes in this block
+        for (const id of rec.deletionIds) {
+          ed.commands.rejectDeletion(id);
+        }
+        for (const id of rec.insertionIds) {
+          ed.commands.rejectInsertion(id);
         }
       }
       // "leave_alone" does nothing to the document
@@ -1579,10 +1549,29 @@ export function AIEditorProvider({
 
       // Parse /review command from prompt
       const { isReviewCommand, promptText } = parseReviewCommand(prompt);
+      const reviewRequested = isReviewCommand || options?.forceReviewMode;
+
+      // If /review was requested but no track changes in scope, return early with message
+      if (reviewRequested && !hasTrackChanges) {
+        const message = hasSelection
+          ? "No track changes found in the selected text. Select text containing track changes, or clear your selection to review all changes in the document."
+          : "No track changes found in the document. There's nothing to review.";
+
+        addMessage({
+          role: "user",
+          content: prompt,
+          metadata: { isReviewMode: true },
+        });
+        addMessage({
+          role: "assistant",
+          content: message,
+        });
+        setIsLoading(false);
+        return;
+      }
 
       // Review mode is ONLY enabled by explicit /review command (and requires pending changes)
-      const isReviewMode =
-        (isReviewCommand || options?.forceReviewMode) && hasTrackChanges;
+      const isReviewMode = reviewRequested && hasTrackChanges;
 
       // Use the cleaned prompt text (without /review prefix) for AI
       const effectivePrompt = isReviewCommand ? promptText : prompt;
@@ -1773,18 +1762,10 @@ export function AIEditorProvider({
               continue;
             }
 
-            // Determine the primary track change ID and type
-            // For paired changes, we'll use the deletion ID as primary
-            const trackChangeId =
-              grouped.deletionId || grouped.insertionId || "";
-            const trackChangeType: "insertion" | "deletion" = grouped.deletionId
-              ? "deletion"
-              : "insertion";
-
             recommendations.push({
               id: `rec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              trackChangeId,
-              trackChangeType,
+              deletionIds: grouped.deletionIds,
+              insertionIds: grouped.insertionIds,
               deletedText: grouped.deletedText,
               insertedText: grouped.insertedText,
               recommendation: rec.recommendation,
