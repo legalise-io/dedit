@@ -1,59 +1,11 @@
 import { Editor } from "@tiptap/react";
 import type { AIEdit, WordChange } from "./types";
 import { computeDiff } from "./diffUtils";
-import {
-  findParagraphWithPositionMap,
-  cleanPosToDocPos,
-  type ParagraphPositionMap,
-} from "./documentUtils";
+import { findParagraphWithPositionMap, cleanPosToDocPos } from "./documentUtils";
 
 // Generate unique ID for edits
 const generateEditId = () =>
   `edit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-/**
- * Represents a diff change with both clean-text and document positions.
- */
-interface MappedDiffChange {
-  type: "delete" | "insert";
-  text: string;
-  /** Position in clean text (0-indexed within paragraph) */
-  cleanStart: number;
-  cleanEnd: number;
-  /** Actual document position */
-  docStart: number;
-  docEnd: number;
-}
-
-/**
- * Map diff changes from clean-text positions to actual document positions.
- * This allows us to apply edits correctly even when the paragraph has
- * existing track changes (deletions that exist in doc but not in clean text).
- */
-function mapDiffChangesToDocPositions(
-  diff: ReturnType<typeof computeDiff>,
-  positionMap: ParagraphPositionMap,
-): MappedDiffChange[] {
-  const mapped: MappedDiffChange[] = [];
-
-  for (const change of diff) {
-    if (change.type === "delete" || change.type === "insert") {
-      const docStart = cleanPosToDocPos(change.oldStart, positionMap);
-      const docEnd = cleanPosToDocPos(change.oldEnd, positionMap);
-
-      mapped.push({
-        type: change.type,
-        text: change.text,
-        cleanStart: change.oldStart,
-        cleanEnd: change.oldEnd,
-        docStart,
-        docEnd,
-      });
-    }
-  }
-
-  return mapped;
-}
 
 /**
  * Apply a single paragraph edit and return individual word changes as AIEdits.
