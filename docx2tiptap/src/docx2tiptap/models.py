@@ -106,6 +106,8 @@ class Paragraph:
     style: Optional[str] = None
     numbering: Optional[str] = None  # Computed numbering like "2a"
     level: int = 0  # Heading level (0 = not a heading)
+    # Raw OOXML for paragraph properties (pPr) - preserves numbering overrides, etc.
+    raw_pPr: Optional[str] = None
 
 
 @dataclass

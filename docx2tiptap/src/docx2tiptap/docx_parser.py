@@ -107,6 +107,7 @@ def parse_paragraph(
 
     # Get numbering info - check direct numPr first, then fall back to style
     numbering = None
+    raw_pPr = None
     if numbering_tracker:
         num_id = None
         ilvl = None
@@ -121,6 +122,11 @@ def parse_paragraph(
                     ilvl = int(ilvl_elem.get(qn("w:val")))
                     num_id = num_id_elem.get(qn("w:val"))
 
+                # If numId="0", this is an explicit "no numbering" override
+                # Preserve the pPr so we can restore it on export
+                if num_id == "0":
+                    raw_pPr = element_to_base64(para._element.pPr)
+
         # If no direct numPr, check if the style defines numbering
         if num_id is None and style_name:
             style_numbering = numbering_tracker.get_numbering_from_style(
@@ -134,7 +140,7 @@ def parse_paragraph(
             numbering = numbering_tracker.get_number(num_id, ilvl)
 
     return Paragraph(
-        runs=runs, style=style_name, numbering=numbering, level=level
+        runs=runs, style=style_name, numbering=numbering, level=level, raw_pPr=raw_pPr
     )
 
 

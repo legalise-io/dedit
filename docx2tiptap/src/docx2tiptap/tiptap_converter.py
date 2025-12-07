@@ -153,15 +153,23 @@ class TipTapConverter:
         ]
 
         # Handle numbered items - prepend the number to the content
+        # We also set a flag so the exporter can strip this on export
+        # (Word will regenerate numbering from the style)
+        has_style_numbering = False
         if para.numbering and content:
             numbering_text = {"type": "text", "text": f"{para.numbering} "}
             content.insert(0, numbering_text)
+            has_style_numbering = True
 
         # Determine if this is a heading
         if para.level > 0:
             attrs = {"level": min(para.level, 6)}  # TipTap supports h1-h6
             if para.style:
                 attrs["styleName"] = para.style
+            if has_style_numbering:
+                attrs["hasStyleNumbering"] = True
+            if para.raw_pPr:
+                attrs["rawPPr"] = para.raw_pPr
             return {
                 "type": "heading",
                 "attrs": attrs,
@@ -170,8 +178,15 @@ class TipTapConverter:
 
         # Regular paragraph - include style name if present
         node = {"type": "paragraph", "content": content}
+        attrs = {}
         if para.style:
-            node["attrs"] = {"styleName": para.style}
+            attrs["styleName"] = para.style
+        if has_style_numbering:
+            attrs["hasStyleNumbering"] = True
+        if para.raw_pPr:
+            attrs["rawPPr"] = para.raw_pPr
+        if attrs:
+            node["attrs"] = attrs
         return node
 
     def _table_to_node(self, table: Table) -> dict:
@@ -328,15 +343,25 @@ class TipTapConverter:
         """
         Extract raw OOXML styles from content into a key-value store.
 
-        Removes rawTblPr, rawTblGrid, rawXml, and colwidth from nodes
+        Removes rawTblPr, rawTblGrid, rawXml, rawPPr, and colwidth from nodes
         (TipTap strips unknown attrs, colwidth in twips breaks layout).
 
         Returns a dict to be stored in an invisible node, or None if empty.
         """
         styles = {}
+        para_counter = [0]  # Use list for mutable counter in nested function
 
         def process_node(node: dict):
-            if node.get("type") == "table":
+            node_type = node.get("type")
+
+            # Handle paragraph/heading rawPPr (numbering overrides, etc.)
+            if node_type in ("paragraph", "heading"):
+                attrs = node.get("attrs", {})
+                if "rawPPr" in attrs:
+                    styles[f"para:{para_counter[0]}:pPr"] = attrs.pop("rawPPr")
+                para_counter[0] += 1
+
+            if node_type == "table":
                 attrs = node.get("attrs", {})
                 table_id = attrs.get("id")
                 if table_id:

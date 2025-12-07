@@ -123,7 +123,7 @@ class DocxExporter:
         Restore raw OOXML styles from rawStylesStorage node back into content.
 
         Finds the storage node, deserializes the data, and puts rawTblPr,
-        rawTblGrid, rawXml back into the appropriate table/row/cell nodes.
+        rawTblGrid, rawXml, rawPPr back into the appropriate nodes.
         """
         doc = copy.deepcopy(tiptap_json)
         content = doc.get("content", [])
@@ -144,8 +144,21 @@ class DocxExporter:
             return doc
 
         # Restore styles to nodes
+        para_counter = [0]  # Use list for mutable counter in nested function
+
         def process_node(node: dict):
-            if node.get("type") == "table":
+            node_type = node.get("type")
+
+            # Restore paragraph/heading rawPPr (numbering overrides, etc.)
+            if node_type in ("paragraph", "heading"):
+                para_key = f"para:{para_counter[0]}:pPr"
+                if para_key in raw_styles:
+                    if "attrs" not in node:
+                        node["attrs"] = {}
+                    node["attrs"]["rawPPr"] = raw_styles[para_key]
+                para_counter[0] += 1
+
+            if node_type == "table":
                 attrs = node.get("attrs", {})
                 table_id = attrs.get("id")
                 if table_id:
@@ -202,6 +215,8 @@ class DocxExporter:
         """Process a paragraph node."""
         attrs = node.get("attrs", {})
         style_name = attrs.get("styleName")
+        has_style_numbering = attrs.get("hasStyleNumbering", False)
+        raw_pPr = attrs.get("rawPPr")
 
         if table_cell is not None:
             para = (
@@ -223,9 +238,21 @@ class DocxExporter:
             except KeyError:
                 pass  # Style not found in document, skip
 
+        # Apply raw pPr if available (preserves numId="0" overrides, etc.)
+        if raw_pPr:
+            self._restore_raw_paragraph_properties(para, raw_pPr)
+
         content = node.get("content", [])
+
+        # If hasStyleNumbering is set, skip the first text node (computed numbering)
+        # Word will regenerate the numbering from the style definition
+        skip_first_text = has_style_numbering
+
         for child_node in content:
             if child_node.get("type") == "text":
+                if skip_first_text:
+                    skip_first_text = False
+                    continue
                 self._add_text_with_marks(para, child_node)
             elif child_node.get("type") == "hardBreak":
                 self._add_break(para, child_node)
@@ -235,7 +262,13 @@ class DocxExporter:
         attrs = node.get("attrs", {})
         level = attrs.get("level", 1)
         style_name = attrs.get("styleName")
+        has_style_numbering = attrs.get("hasStyleNumbering", False)
+        raw_pPr = attrs.get("rawPPr")
         content = node.get("content", [])
+
+        # If hasStyleNumbering is set, skip the first text node (computed numbering)
+        # Word will regenerate the numbering from the style definition
+        skip_first_text = has_style_numbering
 
         if table_cell is not None:
             para = table_cell.add_paragraph()
@@ -244,8 +277,14 @@ class DocxExporter:
                     para.style = style_name
                 except KeyError:
                     pass
+            # Apply raw pPr if available
+            if raw_pPr:
+                self._restore_raw_paragraph_properties(para, raw_pPr)
             for child_node in content:
                 if child_node.get("type") == "text":
+                    if skip_first_text:
+                        skip_first_text = False
+                        continue
                     run = para.add_run(child_node.get("text", ""))
                     run.bold = True
                     self._apply_basic_marks(run, child_node.get("marks", []))
@@ -263,8 +302,15 @@ class DocxExporter:
             else:
                 para = self._doc.add_heading(level=level)
 
+            # Apply raw pPr if available (preserves numId="0" overrides, etc.)
+            if raw_pPr:
+                self._restore_raw_paragraph_properties(para, raw_pPr)
+
             for child_node in content:
                 if child_node.get("type") == "text":
+                    if skip_first_text:
+                        skip_first_text = False
+                        continue
                     self._add_text_with_marks(para, child_node)
                 elif child_node.get("type") == "hardBreak":
                     self._add_break(para, child_node)
@@ -396,15 +442,40 @@ class DocxExporter:
         """Fill a table cell with content."""
         for i, content_node in enumerate(cell_content):
             if i == 0 and cell.paragraphs:
-                if content_node.get("type") == "paragraph":
+                node_type = content_node.get("type")
+                attrs = content_node.get("attrs", {})
+                has_style_numbering = attrs.get("hasStyleNumbering", False)
+                skip_first_text = has_style_numbering
+
+                if node_type == "paragraph":
+                    # Apply style if specified
+                    style_name = attrs.get("styleName")
+                    if style_name:
+                        try:
+                            cell.paragraphs[0].style = style_name
+                        except KeyError:
+                            pass
                     for child_node in content_node.get("content", []):
                         if child_node.get("type") == "text":
+                            if skip_first_text:
+                                skip_first_text = False
+                                continue
                             self._add_text_with_marks(cell.paragraphs[0], child_node)
                         elif child_node.get("type") == "hardBreak":
                             self._add_break(cell.paragraphs[0], child_node)
-                elif content_node.get("type") == "heading":
+                elif node_type == "heading":
+                    # Apply style if specified
+                    style_name = attrs.get("styleName")
+                    if style_name:
+                        try:
+                            cell.paragraphs[0].style = style_name
+                        except KeyError:
+                            pass
                     for child_node in content_node.get("content", []):
                         if child_node.get("type") == "text":
+                            if skip_first_text:
+                                skip_first_text = False
+                                continue
                             run = cell.paragraphs[0].add_run(child_node.get("text", ""))
                             run.bold = True
                             self._apply_basic_marks(run, child_node.get("marks", []))
@@ -622,6 +693,45 @@ class DocxExporter:
 
         r.append(br)
         p_elem.append(r)
+
+    def _restore_raw_paragraph_properties(self, para, raw_xml: str) -> None:
+        """
+        Restore raw pPr element from base64-encoded XML.
+
+        This preserves paragraph properties like numPr with numId="0"
+        which explicitly turns off numbering even when a numbered style is applied.
+        """
+        if not raw_xml:
+            return
+
+        p = para._p
+        new_pPr = base64_to_element(raw_xml)
+        if new_pPr is None:
+            return
+
+        # Get existing pPr or create one
+        existing_pPr = p.find(qn("w:pPr"))
+
+        # We need to merge - keep the pStyle from existing but add numPr from new
+        # This is because python-docx sets pStyle when we assign para.style
+        if existing_pPr is not None:
+            # Look for numPr in the restored pPr and add it to existing
+            new_numPr = new_pPr.find(qn("w:numPr"))
+            if new_numPr is not None:
+                # Remove any existing numPr first
+                old_numPr = existing_pPr.find(qn("w:numPr"))
+                if old_numPr is not None:
+                    existing_pPr.remove(old_numPr)
+                # Insert numPr after pStyle (if present) for proper ordering
+                pStyle = existing_pPr.find(qn("w:pStyle"))
+                if pStyle is not None:
+                    pStyle_idx = list(existing_pPr).index(pStyle)
+                    existing_pPr.insert(pStyle_idx + 1, new_numPr)
+                else:
+                    existing_pPr.insert(0, new_numPr)
+        else:
+            # No existing pPr, just add the new one
+            p.insert(0, new_pPr)
 
     def _restore_raw_cell_properties(self, cell, raw_xml: str) -> None:
         """Restore raw tcPr element from base64-encoded XML."""
