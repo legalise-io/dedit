@@ -108,6 +108,9 @@ class Paragraph:
     level: int = 0  # Heading level (0 = not a heading)
     # Raw OOXML for paragraph properties (pPr) - preserves numbering overrides, etc.
     raw_pPr: Optional[str] = None
+    # Numbering definition info (for TipTap to create new numbered items)
+    num_id: Optional[str] = None  # Word numId reference
+    num_ilvl: int = 0  # Numbering indentation level (0-8)
 
 
 @dataclass

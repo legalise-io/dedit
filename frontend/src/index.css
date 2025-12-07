@@ -231,6 +231,28 @@ body {
     cursor: col-resize;
 }
 
+/* Style Numbering - Word-style automatic numbering */
+.tiptap .has-style-numbering {
+    position: relative;
+    padding-left: 5em; /* Space for the number - generous to fit longer numbers */
+}
+
+.tiptap .has-style-numbering::before {
+    content: attr(data-style-numbering);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 4.5em;
+    text-align: right;
+    padding-right: 0.5em;
+    color: #666;
+    font-weight: normal;
+    /* Make non-selectable */
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+}
+
 .loading {
     text-align: center;
     padding: 2rem;

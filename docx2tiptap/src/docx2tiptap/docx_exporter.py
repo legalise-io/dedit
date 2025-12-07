@@ -71,6 +71,9 @@ class DocxExporter:
         self._revision_id_counter = 0
         self._comment_runs_map = {}
 
+        # Recalculate numbering based on numIlvl values (in case levels changed in TipTap)
+        tiptap_json = self._recalculate_numbering(tiptap_json)
+
         # Restore raw styles from storage node
         tiptap_json = self._restore_raw_styles(tiptap_json)
 
@@ -192,6 +195,135 @@ class DocxExporter:
 
         return doc
 
+    def _recalculate_numbering(self, tiptap_json: dict) -> dict:
+        """
+        Recalculate styleNumbering for all paragraphs based on numIlvl values.
+
+        This ensures numbering is correct even after Tab/Shift-Tab changes in TipTap
+        that may have changed numIlvl values without proper recalculation of the
+        display numbers.
+
+        IMPORTANT: This also updates styleName when numIlvl differs from what the
+        style would normally provide. Word uses style-based numbering where different
+        styles (SH1Legal, SH2Legal, SH3Legal, etc.) correspond to different levels.
+        When the user changes the level in TipTap, we need to change the style.
+
+        The algorithm:
+        1. Extract the style-numbering map from rawStylesStorage
+        2. Group paragraphs by numId
+        3. For each paragraph, if numIlvl differs from the style's default ilvl,
+           find and apply the correct style for that numId+ilvl combination
+        4. Recalculate the display numbers
+        """
+        doc = copy.deepcopy(tiptap_json)
+
+        # Extract the style-numbering map from rawStylesStorage
+        style_numbering_map = {}
+        for node in doc.get("content", []):
+            if node.get("type") == "rawStylesStorage":
+                data = node.get("attrs", {}).get("data", "{}")
+                raw_styles = json.loads(data)
+                style_numbering_map = raw_styles.get("__style_numbering_map__", {})
+                break
+
+        style_to_num = style_numbering_map.get("style_to_num", {})
+        num_to_style = style_numbering_map.get("num_to_style", {})
+
+        # Collect all numbered paragraphs grouped by numId
+        # We need to track their position in the document for ordering
+        numbered_paras: dict[str, list[tuple[int, dict]]] = {}  # numId -> [(index, node), ...]
+        para_index = [0]  # Mutable counter for document order
+
+        def collect_numbered(node: dict, parent_content: list = None, node_index: int = 0):
+            """Collect numbered paragraphs in document order."""
+            node_type = node.get("type")
+
+            if node_type in ("paragraph", "heading"):
+                attrs = node.get("attrs", {})
+                num_id = attrs.get("numId")
+                if num_id:
+                    if num_id not in numbered_paras:
+                        numbered_paras[num_id] = []
+                    numbered_paras[num_id].append((para_index[0], node))
+                para_index[0] += 1
+
+            # Recurse into content
+            for i, child in enumerate(node.get("content", [])):
+                if isinstance(child, dict):
+                    collect_numbered(child, node.get("content", []), i)
+
+        for node in doc.get("content", []):
+            collect_numbered(node)
+
+        # Now recalculate numbering for each numId group
+        for num_id, paras in numbered_paras.items():
+            # paras are already in document order (by para_index)
+            paras.sort(key=lambda x: x[0])
+
+            # Track counters at each level
+            counters: list[int] = []
+            parent_prefixes: list[str] = [""]
+            last_level = -1
+
+            for _, node in paras:
+                attrs = node.get("attrs", {})
+                level = attrs.get("numIlvl", 0)
+                current_style = attrs.get("styleName")
+
+                # Check if we need to update the style based on numIlvl
+                # Word uses style-based numbering: SH1Legal->ilvl=0, SH2Legal->ilvl=1, etc.
+                # When user changes level via Tab/Shift-Tab, we need to change the style
+                if current_style and num_to_style and num_id in num_to_style:
+                    # Get what level the current style would provide
+                    style_info = style_to_num.get(current_style, {})
+                    style_default_ilvl = style_info.get("ilvl")
+
+                    # If the current numIlvl differs from the style's default, find correct style
+                    if style_default_ilvl is not None and style_default_ilvl != level:
+                        # Look up the correct style for this numId + ilvl combination
+                        # Note: JSON keys are strings, so convert level to string
+                        correct_style = num_to_style.get(num_id, {}).get(str(level))
+                        if correct_style:
+                            attrs["styleName"] = correct_style
+
+                if level > last_level:
+                    # Going deeper - initialize new level counters
+                    for i in range(last_level + 1, level + 1):
+                        while len(counters) <= i:
+                            counters.append(0)
+                        counters[i] = 1
+                        # Build parent prefix for this level
+                        while len(parent_prefixes) <= i:
+                            parent_prefixes.append("")
+                        if i > 0:
+                            parent_num = counters[i - 1] if i - 1 < len(counters) else 1
+                            parent_prefixes[i] = parent_prefixes[i - 1] + str(parent_num) + "."
+                        else:
+                            parent_prefixes[i] = ""
+                elif level < last_level:
+                    # Going shallower - increment counter at this level
+                    while len(counters) <= level:
+                        counters.append(0)
+                    counters[level] = counters[level] + 1
+                    # Reset deeper level counters
+                    for i in range(level + 1, len(counters)):
+                        counters[i] = 0
+                else:
+                    # Same level - increment counter
+                    while len(counters) <= level:
+                        counters.append(0)
+                    counters[level] = counters[level] + 1
+
+                # Build the new number
+                prefix = parent_prefixes[level] if level < len(parent_prefixes) else ""
+                new_number = prefix + str(counters[level]) + "."
+
+                # Update the node's styleNumbering
+                attrs["styleNumbering"] = new_number
+                last_level = level
+
+        return doc
+
     def _process_node(self, node: dict, table_cell=None) -> None:
         """
         Process a TipTap node and add it to the document.
@@ -215,8 +347,11 @@ class DocxExporter:
         """Process a paragraph node."""
         attrs = node.get("attrs", {})
         style_name = attrs.get("styleName")
-        has_style_numbering = attrs.get("hasStyleNumbering", False)
         raw_pPr = attrs.get("rawPPr")
+        num_ilvl = attrs.get("numIlvl")  # Current indentation level from TipTap
+        num_id = attrs.get("numId")  # Numbering definition ID
+        # styleNumbering is stored as an attr, not as text content
+        # Word will regenerate numbering from the style definition
 
         if table_cell is not None:
             para = (
@@ -240,19 +375,15 @@ class DocxExporter:
 
         # Apply raw pPr if available (preserves numId="0" overrides, etc.)
         if raw_pPr:
-            self._restore_raw_paragraph_properties(para, raw_pPr)
+            self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl)
+        elif num_id is not None and num_ilvl is not None:
+            # No raw pPr but we have numbering - add numPr element
+            self._add_numbering_to_paragraph(para, num_id, num_ilvl)
 
         content = node.get("content", [])
 
-        # If hasStyleNumbering is set, skip the first text node (computed numbering)
-        # Word will regenerate the numbering from the style definition
-        skip_first_text = has_style_numbering
-
         for child_node in content:
             if child_node.get("type") == "text":
-                if skip_first_text:
-                    skip_first_text = False
-                    continue
                 self._add_text_with_marks(para, child_node)
             elif child_node.get("type") == "hardBreak":
                 self._add_break(para, child_node)
@@ -262,13 +393,12 @@ class DocxExporter:
         attrs = node.get("attrs", {})
         level = attrs.get("level", 1)
         style_name = attrs.get("styleName")
-        has_style_numbering = attrs.get("hasStyleNumbering", False)
         raw_pPr = attrs.get("rawPPr")
+        num_ilvl = attrs.get("numIlvl")  # Current indentation level from TipTap
+        num_id = attrs.get("numId")  # Numbering definition ID
         content = node.get("content", [])
-
-        # If hasStyleNumbering is set, skip the first text node (computed numbering)
-        # Word will regenerate the numbering from the style definition
-        skip_first_text = has_style_numbering
+        # styleNumbering is stored as an attr, not as text content
+        # Word will regenerate numbering from the style definition
 
         if table_cell is not None:
             para = table_cell.add_paragraph()
@@ -279,12 +409,11 @@ class DocxExporter:
                     pass
             # Apply raw pPr if available
             if raw_pPr:
-                self._restore_raw_paragraph_properties(para, raw_pPr)
+                self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl)
+            elif num_id is not None and num_ilvl is not None:
+                self._add_numbering_to_paragraph(para, num_id, num_ilvl)
             for child_node in content:
                 if child_node.get("type") == "text":
-                    if skip_first_text:
-                        skip_first_text = False
-                        continue
                     run = para.add_run(child_node.get("text", ""))
                     run.bold = True
                     self._apply_basic_marks(run, child_node.get("marks", []))
@@ -304,13 +433,12 @@ class DocxExporter:
 
             # Apply raw pPr if available (preserves numId="0" overrides, etc.)
             if raw_pPr:
-                self._restore_raw_paragraph_properties(para, raw_pPr)
+                self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl)
+            elif num_id is not None and num_ilvl is not None:
+                self._add_numbering_to_paragraph(para, num_id, num_ilvl)
 
             for child_node in content:
                 if child_node.get("type") == "text":
-                    if skip_first_text:
-                        skip_first_text = False
-                        continue
                     self._add_text_with_marks(para, child_node)
                 elif child_node.get("type") == "hardBreak":
                     self._add_break(para, child_node)
@@ -694,7 +822,9 @@ class DocxExporter:
         r.append(br)
         p_elem.append(r)
 
-    def _restore_raw_paragraph_properties(self, para, raw_xml: str) -> None:
+    def _restore_raw_paragraph_properties(
+        self, para, raw_xml: str, num_ilvl: int = None
+    ) -> None:
         """
         Restore raw pPr element from base64-encoded XML.
 
@@ -706,6 +836,12 @@ class DocxExporter:
         - rPr (run properties default)
         - jc (justification)
         - And any other direct formatting elements
+
+        Args:
+            para: The python-docx Paragraph object
+            raw_xml: Base64-encoded pPr element
+            num_ilvl: If provided, update the ilvl in numPr to this value
+                     (for when user changed indentation level in TipTap)
         """
         if not raw_xml:
             return
@@ -714,6 +850,20 @@ class DocxExporter:
         new_pPr = base64_to_element(raw_xml)
         if new_pPr is None:
             return
+
+        # If num_ilvl is provided, update the ilvl element in numPr
+        if num_ilvl is not None:
+            numPr = new_pPr.find(qn("w:numPr"))
+            if numPr is not None:
+                ilvl = numPr.find(qn("w:ilvl"))
+                if ilvl is not None:
+                    ilvl.set(qn("w:val"), str(num_ilvl))
+                else:
+                    # Create ilvl element if it doesn't exist
+                    ilvl = OxmlElement("w:ilvl")
+                    ilvl.set(qn("w:val"), str(num_ilvl))
+                    # ilvl should be first child of numPr
+                    numPr.insert(0, ilvl)
 
         # Get existing pPr (python-docx creates one when we set para.style)
         existing_pPr = p.find(qn("w:pPr"))
@@ -738,6 +888,37 @@ class DocxExporter:
         else:
             # No existing pPr, just add the new one
             p.insert(0, new_pPr)
+
+    def _add_numbering_to_paragraph(self, para, num_id: str, num_ilvl: int) -> None:
+        """
+        Add numbering properties to a paragraph that doesn't have rawPPr.
+
+        This is used for paragraphs created via Enter key in TipTap that
+        inherit numbering but don't have preserved raw XML.
+
+        Args:
+            para: The python-docx Paragraph object
+            num_id: The Word numbering definition ID
+            num_ilvl: The indentation level (0-8)
+        """
+        p = para._p
+        pPr = p.get_or_add_pPr()
+
+        # Create numPr element
+        numPr = OxmlElement("w:numPr")
+
+        # Add ilvl
+        ilvl = OxmlElement("w:ilvl")
+        ilvl.set(qn("w:val"), str(num_ilvl))
+        numPr.append(ilvl)
+
+        # Add numId
+        numId_elem = OxmlElement("w:numId")
+        numId_elem.set(qn("w:val"), str(num_id))
+        numPr.append(numId_elem)
+
+        # Insert numPr in the correct position
+        self._insert_pPr_element(pPr, numPr)
 
     def _insert_pPr_element(self, pPr, element) -> None:
         """

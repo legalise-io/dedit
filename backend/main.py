@@ -63,12 +63,12 @@ async def upload_document(file: UploadFile):
     try:
         content = await file.read()
 
-        # Parse the document (now returns elements and comments)
-        elements, comments = parse_docx(content)
+        # Parse the document (returns elements, comments, and style mapping)
+        elements, comments, style_numbering_map = parse_docx(content)
 
         # Convert to both formats
         intermediate = elements_to_dict(elements)
-        tiptap_doc = to_tiptap(elements, comments)
+        tiptap_doc = to_tiptap(elements, comments, style_numbering_map)
         comments_list = comments_to_dict(comments)
 
         # Generate document ID

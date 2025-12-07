@@ -22,14 +22,20 @@ class TipTapConverter:
     (like comments lookup) as instance variables for thread safety.
     """
 
-    def __init__(self, comments: Optional[dict[str, Comment]] = None):
+    def __init__(
+        self,
+        comments: Optional[dict[str, Comment]] = None,
+        style_numbering_map: Optional[dict] = None,
+    ):
         """
         Initialize the converter.
 
         Args:
             comments: Optional dict mapping comment ID to Comment objects
+            style_numbering_map: Optional dict with style-to-numbering mappings
         """
         self._comments = comments or {}
+        self._style_numbering_map = style_numbering_map or {}
 
     def convert(self, elements: list) -> dict:
         """
@@ -57,6 +63,11 @@ class TipTapConverter:
 
         # Extract raw styles and store in invisible node
         raw_styles = self._extract_and_store_raw_styles(content)
+
+        # Also store the style-numbering map for export
+        if self._style_numbering_map:
+            raw_styles["__style_numbering_map__"] = self._style_numbering_map
+
         if raw_styles:
             content.append(
                 {
@@ -152,39 +163,31 @@ class TipTapConverter:
             if node is not None
         ]
 
-        # Handle numbered items - prepend the number to the content
-        # We also set a flag so the exporter can strip this on export
-        # (Word will regenerate numbering from the style)
-        has_style_numbering = False
-        if para.numbering and content:
-            numbering_text = {"type": "text", "text": f"{para.numbering} "}
-            content.insert(0, numbering_text)
-            has_style_numbering = True
+        # Build base attributes
+        attrs = {}
+        if para.style:
+            attrs["styleName"] = para.style
+        if para.raw_pPr:
+            attrs["rawPPr"] = para.raw_pPr
+
+        # Handle numbered items - store numbering info in attrs (not as text)
+        # TipTap will display via CSS ::before, Word regenerates from style
+        if para.numbering:
+            attrs["styleNumbering"] = para.numbering  # e.g., "2.3" or "1.1.1(a)"
+            attrs["numId"] = para.num_id  # Word numId reference
+            attrs["numIlvl"] = para.num_ilvl  # Indentation level (0-8)
 
         # Determine if this is a heading
         if para.level > 0:
-            attrs = {"level": min(para.level, 6)}  # TipTap supports h1-h6
-            if para.style:
-                attrs["styleName"] = para.style
-            if has_style_numbering:
-                attrs["hasStyleNumbering"] = True
-            if para.raw_pPr:
-                attrs["rawPPr"] = para.raw_pPr
+            attrs["level"] = min(para.level, 6)  # TipTap supports h1-h6
             return {
                 "type": "heading",
                 "attrs": attrs,
                 "content": content,
             }
 
-        # Regular paragraph - include style name if present
+        # Regular paragraph
         node = {"type": "paragraph", "content": content}
-        attrs = {}
-        if para.style:
-            attrs["styleName"] = para.style
-        if has_style_numbering:
-            attrs["hasStyleNumbering"] = True
-        if para.raw_pPr:
-            attrs["rawPPr"] = para.raw_pPr
         if attrs:
             node["attrs"] = attrs
         return node
@@ -398,7 +401,9 @@ class TipTapConverter:
         return styles if styles else None
 
 
-def to_tiptap(elements: list, comments: dict = None) -> dict:
+def to_tiptap(
+    elements: list, comments: dict = None, style_numbering_map: dict = None
+) -> dict:
     """
     Convert a list of parsed document elements to a TipTap document.
 
@@ -408,9 +413,12 @@ def to_tiptap(elements: list, comments: dict = None) -> dict:
     Args:
         elements: List of Paragraph, Table, Section objects
         comments: Optional dict mapping comment ID to Comment objects
+        style_numbering_map: Optional dict with style-to-numbering mappings
 
     Returns:
         TipTap document JSON structure
     """
-    converter = TipTapConverter(comments=comments)
+    converter = TipTapConverter(
+        comments=comments, style_numbering_map=style_numbering_map
+    )
     return converter.convert(elements)

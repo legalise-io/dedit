@@ -111,6 +111,7 @@ export { HeadingWithStyle } from "../extensions/HeadingWithStyle";
 export { HardBreakWithType } from "../extensions/HardBreakWithType";
 export { PersistentSelection } from "../extensions/PersistentSelection";
 export { SearchAndReplace } from "../extensions/SearchAndReplace";
+export { StyleNumbering } from "../extensions/StyleNumbering";
 
 // UI Components
 export { FindReplaceBar } from "../components/FindReplaceBar";

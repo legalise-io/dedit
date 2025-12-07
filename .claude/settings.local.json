@@ -11,7 +11,9 @@
       "Bash(npm run build:*)",
       "Bash(curl:*)",
       "Bash(source:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(pip install:*)",
+      "Bash(npx tsc:*)"
     ],
     "deny": [],
     "ask": []

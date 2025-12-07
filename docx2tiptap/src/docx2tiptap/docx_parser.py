@@ -150,7 +150,13 @@ def parse_paragraph(
         numbering = numbering_tracker.get_number(num_id, ilvl)
 
     return Paragraph(
-        runs=runs, style=style_name, numbering=numbering, level=level, raw_pPr=raw_pPr
+        runs=runs,
+        style=style_name,
+        numbering=numbering,
+        level=level,
+        raw_pPr=raw_pPr,
+        num_id=num_id if num_id and num_id != "0" else None,
+        num_ilvl=ilvl if ilvl is not None else 0,
     )
 
 
@@ -384,21 +390,89 @@ def parse_table(
     return parsed_table
 
 
-def parse_docx(file_content: bytes) -> tuple[list, dict]:
+def extract_style_numbering_map(doc) -> dict:
     """
-    Parse a DOCX file and return a list of document elements and comments.
+    Extract the mapping of styles to their numbering properties.
+
+    This creates a bidirectional map:
+    - style_to_num: {styleName: {numId, ilvl}}
+    - num_to_style: {numId: {ilvl: styleName}}
+
+    This is needed because Word uses style-based numbering where different
+    styles (SH1Legal, SH2Legal, etc.) correspond to different numbering levels.
+    When the user changes the level in TipTap, we need to change the style.
+
+    Returns:
+        dict with 'style_to_num' and 'num_to_style' mappings
+    """
+    style_to_num = {}
+    num_to_style = {}
+
+    # Access the styles part
+    styles_part = doc.part.styles
+    if styles_part is None:
+        return {"style_to_num": {}, "num_to_style": {}}
+
+    styles_element = styles_part._element
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    for style in styles_element.findall(".//w:style", ns):
+        style_id = style.get(qn("w:styleId"))
+        if not style_id:
+            continue
+
+        pPr = style.find("w:pPr", ns)
+        if pPr is None:
+            continue
+
+        numPr = pPr.find("w:numPr", ns)
+        if numPr is None:
+            continue
+
+        # Get ilvl and numId
+        ilvl_elem = numPr.find("w:ilvl", ns)
+        numId_elem = numPr.find("w:numId", ns)
+
+        # ilvl might be missing (inherits from style), default to 0
+        ilvl = "0"
+        if ilvl_elem is not None:
+            ilvl = ilvl_elem.get(qn("w:val"), "0")
+
+        # numId might be "inherit" or missing
+        if numId_elem is None:
+            continue
+        numId = numId_elem.get(qn("w:val"))
+        if not numId or numId == "inherit":
+            continue
+
+        # Store mapping
+        style_to_num[style_id] = {"numId": numId, "ilvl": int(ilvl)}
+
+        if numId not in num_to_style:
+            num_to_style[numId] = {}
+        num_to_style[numId][int(ilvl)] = style_id
+
+    return {"style_to_num": style_to_num, "num_to_style": num_to_style}
+
+
+def parse_docx(file_content: bytes) -> tuple[list, dict, dict]:
+    """
+    Parse a DOCX file and return a list of document elements, comments, and style map.
 
     Args:
         file_content: Raw bytes of the DOCX file
 
     Returns:
-        Tuple of (list of Paragraph/Table/Section objects, dict of comments)
+        Tuple of (list of Paragraph/Table/Section objects, dict of comments, style_numbering_map)
     """
     doc = Document(BytesIO(file_content))
     numbering_tracker = NumberingTracker(doc)
 
     # Extract comments from the document
     comments = extract_comments_from_docx(file_content)
+
+    # Extract style-to-numbering mapping
+    style_numbering_map = extract_style_numbering_map(doc)
 
     elements = []
     para_index = 0
@@ -423,4 +497,4 @@ def parse_docx(file_content: bytes) -> tuple[list, dict]:
                 t = table_map[element]
                 elements.append(parse_table(t, numbering_tracker))
 
-    return elements, comments
+    return elements, comments, style_numbering_map

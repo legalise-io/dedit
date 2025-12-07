@@ -22,6 +22,7 @@ import { RawStyle } from "../../extensions/RawStyle";
 import { TrackChangesMode } from "../../extensions/TrackChangesMode";
 import { SearchAndReplace } from "../../extensions/SearchAndReplace";
 import { RawStylesStorage } from "../../extensions/RawStylesStorage";
+import { StyleNumbering } from "../../extensions/StyleNumbering";
 
 import type { TipTapDocument, UseDocumentEditorOptions } from "../types";
 
@@ -107,6 +108,7 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       }),
       PersistentSelection,
       RawStylesStorage,
+      StyleNumbering,
     ];
 
     // Only include History if not using collaboration (Yjs has its own undo manager)
