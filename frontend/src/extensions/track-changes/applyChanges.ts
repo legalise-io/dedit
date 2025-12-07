@@ -115,7 +115,7 @@ function applyInsertion(
   });
 
   const mappedFrom = tr.mapping.map(change.from);
-  const mappedTo = tr.mapping.map(change.to);
+  const mappedTo = tr.mapping.map(change.to, 1);  // Use positive bias to include last char at boundaries
 
   // First, remove any deletion mark from this range
   // This handles the case where user types inside deleted text
