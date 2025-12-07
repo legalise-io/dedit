@@ -217,6 +217,9 @@ async def export_document(request: ExportRequest):
         # Determine template bytes
         template_bytes: Optional[bytes] = None
 
+        print(f"[EXPORT] template={request.template}, document_id={request.document_id}")
+        print(f"[EXPORT] Available documents: {list(documents.keys())}")
+
         if request.template == TemplateOption.ORIGINAL:
             if not request.document_id:
                 raise HTTPException(
@@ -224,12 +227,22 @@ async def export_document(request: ExportRequest):
                     detail="document_id required when using original template",
                 )
             if request.document_id not in documents:
+                print(f"[EXPORT] Document {request.document_id} NOT FOUND in storage!")
+                print(f"[EXPORT] This usually means the server was restarted since upload.")
                 raise HTTPException(
-                    status_code=404, detail="Document not found"
+                    status_code=404,
+                    detail=f"Document not found. The server may have restarted since you uploaded the document. Please re-upload the document and try again. (Requested ID: {request.document_id})"
                 )
             template_bytes = documents[request.document_id].get(
                 "original_bytes"
             )
+            if not template_bytes:
+                print(f"[EXPORT] Document found but original_bytes is None/empty!")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Document found but original bytes were not stored. This is a bug."
+                )
+            print(f"[EXPORT] Got template_bytes: {len(template_bytes)} bytes")
 
         elif request.template == TemplateOption.CUSTOM:
             if not request.template_id:

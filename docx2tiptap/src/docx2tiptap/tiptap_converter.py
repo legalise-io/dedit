@@ -87,11 +87,16 @@ class TipTapConverter:
         """
         marks = []
 
-        # Basic formatting marks
+        # Basic formatting marks (visible in editor)
         if run.bold:
             marks.append({"type": "bold"})
         if run.italic:
             marks.append({"type": "italic"})
+
+        # Raw style mark (invisible - preserves full w:rPr for round-tripping)
+        # This carries fonts, colors, and other formatting that TipTap won't display
+        if run.raw_rPr:
+            marks.append({"type": "rawStyle", "attrs": {"rPr": run.raw_rPr}})
 
         # Revision marks (track changes)
         if run.revision:
@@ -136,13 +141,20 @@ class TipTapConverter:
 
         # Determine if this is a heading
         if para.level > 0:
+            attrs = {"level": min(para.level, 6)}  # TipTap supports h1-h6
+            if para.style:
+                attrs["styleName"] = para.style
             return {
                 "type": "heading",
-                "attrs": {"level": min(para.level, 6)},  # TipTap supports h1-h6
+                "attrs": attrs,
                 "content": content,
             }
 
-        return {"type": "paragraph", "content": content}
+        # Regular paragraph - include style name if present
+        node = {"type": "paragraph", "content": content}
+        if para.style:
+            node["attrs"] = {"styleName": para.style}
+        return node
 
     def _table_to_node(self, table: Table) -> dict:
         """Convert a Table to TipTap table nodes."""

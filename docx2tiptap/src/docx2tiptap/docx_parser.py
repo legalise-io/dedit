@@ -70,6 +70,7 @@ def parse_paragraph(
                     italic=seg.get("italic", False),
                     revision=seg.get("revision"),
                     comment_ids=comment_ids,
+                    raw_rPr=seg.get("raw_rPr"),
                 )
             )
 

@@ -91,6 +91,8 @@ class TextRun:
     italic: bool = False
     revision: Optional[RevisionInfo] = None
     comment_ids: list[str] = field(default_factory=list)
+    # Raw OOXML for run properties (w:rPr) - preserves fonts, colors, etc.
+    raw_rPr: Optional[str] = None
 
 
 @dataclass

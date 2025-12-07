@@ -102,10 +102,12 @@ export type {
 export { Insertion } from "../extensions/Insertion";
 export { Deletion } from "../extensions/Deletion";
 export { Comment } from "../extensions/Comment";
+export { RawStyle } from "../extensions/RawStyle";
 export { TrackChangesMode } from "../extensions/TrackChangesMode";
 export { Section } from "../extensions/Section";
 export { TableWithId } from "../extensions/TableWithId";
 export { ParagraphWithId } from "../extensions/ParagraphWithId";
+export { HeadingWithStyle } from "../extensions/HeadingWithStyle";
 export { PersistentSelection } from "../extensions/PersistentSelection";
 export { SearchAndReplace } from "../extensions/SearchAndReplace";
 

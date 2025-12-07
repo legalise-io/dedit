@@ -16,6 +16,8 @@ import uuid
 
 from docx.oxml.ns import qn
 
+from .utils import element_to_base64
+
 
 def generate_unique_id(prefix: str) -> str:
     """Generate a globally unique ID for a revision."""
@@ -104,9 +106,12 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
             rPr = element.find(qn("w:rPr"))
             is_bold = False
             is_italic = False
+            raw_rPr = None
             if rPr is not None:
                 is_bold = rPr.find(qn("w:b")) is not None
                 is_italic = rPr.find(qn("w:i")) is not None
+                # Store full rPr as base64 for round-trip preservation
+                raw_rPr = element_to_base64(rPr)
 
             for child in element:
                 if child.tag == qn("w:t"):
@@ -118,6 +123,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                                 "revision": current_revision,
                                 "bold": is_bold,
                                 "italic": is_italic,
+                                "raw_rPr": raw_rPr,
                             }
                         )
                 elif child.tag == qn("w:delText"):
@@ -129,6 +135,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                                 "revision": current_revision,
                                 "bold": is_bold,
                                 "italic": is_italic,
+                                "raw_rPr": raw_rPr,
                             }
                         )
             return
@@ -146,7 +153,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
 
 def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
     """
-    Merge adjacent text segments that have the same revision and formatting.
+    Merge adjacent text segments that have the same revision, formatting, and raw styles.
 
     Args:
         segments: List of text segments from get_text_with_revisions
@@ -172,8 +179,10 @@ def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
         same_format = current.get("bold") == seg.get("bold") and current.get(
             "italic"
         ) == seg.get("italic")
+        # Also check raw_rPr - segments with different raw styles should not merge
+        same_raw_style = current.get("raw_rPr") == seg.get("raw_rPr")
 
-        if same_revision and same_format:
+        if same_revision and same_format and same_raw_style:
             current["text"] += seg["text"]
         else:
             if current["text"]:

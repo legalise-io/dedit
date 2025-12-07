@@ -94,6 +94,16 @@ export const ParagraphWithId = Paragraph.extend<ParagraphWithIdOptions>({
           return { class: attributes.className };
         },
       },
+      // styleName preserves the Word paragraph style for round-tripping
+      styleName: {
+        default: null,
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute("data-style-name") || null,
+        renderHTML: (attributes: Record<string, unknown>) => {
+          if (!attributes.styleName) return {};
+          return { "data-style-name": attributes.styleName };
+        },
+      },
     };
 
     // Add custom attributes if configured

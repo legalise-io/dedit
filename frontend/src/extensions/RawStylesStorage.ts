@@ -17,12 +17,19 @@ export const RawStylesStorage = Node.create({
     return {
       data: {
         default: '{}',
+        parseHTML: (element: HTMLElement) =>
+          element.getAttribute('data-raw-styles') || '{}',
+        renderHTML: (attributes: Record<string, unknown>) => {
+          return { 'data-raw-styles': attributes.data }
+        },
       },
     }
   },
 
   parseHTML() {
-    return [{ tag: 'div[data-raw-styles-storage]' }]
+    return [{
+      tag: 'div[data-raw-styles-storage]',
+    }]
   },
 
   renderHTML({ HTMLAttributes }) {

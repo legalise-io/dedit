@@ -5,7 +5,11 @@
       "Bash(wc:*)",
       "Bash(source .venv/bin/activate)",
       "Bash(python -c:*)",
-      "Bash(source backend/.venv/bin/activate)"
+      "Bash(source backend/.venv/bin/activate)",
+      "WebSearch",
+      "Bash(python -m pytest:*)",
+      "Bash(npm run build:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

@@ -200,6 +200,9 @@ class DocxExporter:
 
     def _process_paragraph(self, node: dict, table_cell=None) -> None:
         """Process a paragraph node."""
+        attrs = node.get("attrs", {})
+        style_name = attrs.get("styleName")
+
         if table_cell is not None:
             para = (
                 table_cell.paragraphs[0]
@@ -213,6 +216,13 @@ class DocxExporter:
         else:
             para = self._doc.add_paragraph()
 
+        # Apply style if specified
+        if style_name:
+            try:
+                para.style = style_name
+            except KeyError:
+                pass  # Style not found in document, skip
+
         content = node.get("content", [])
         for text_node in content:
             if text_node.get("type") == "text":
@@ -220,18 +230,35 @@ class DocxExporter:
 
     def _process_heading(self, node: dict, table_cell=None) -> None:
         """Process a heading node."""
-        level = node.get("attrs", {}).get("level", 1)
+        attrs = node.get("attrs", {})
+        level = attrs.get("level", 1)
+        style_name = attrs.get("styleName")
         content = node.get("content", [])
 
         if table_cell is not None:
             para = table_cell.add_paragraph()
+            if style_name:
+                try:
+                    para.style = style_name
+                except KeyError:
+                    pass
             for text_node in content:
                 if text_node.get("type") == "text":
                     run = para.add_run(text_node.get("text", ""))
                     run.bold = True
                     self._apply_basic_marks(run, text_node.get("marks", []))
         else:
-            para = self._doc.add_heading(level=level)
+            # If we have a custom style name, use it; otherwise use standard heading
+            if style_name:
+                para = self._doc.add_paragraph()
+                try:
+                    para.style = style_name
+                except KeyError:
+                    # Fall back to standard heading if style not found
+                    para.style = f"Heading {level}"
+            else:
+                para = self._doc.add_heading(level=level)
+
             for text_node in content:
                 if text_node.get("type") == "text":
                     self._add_text_with_marks(para, text_node)
@@ -396,9 +423,10 @@ class DocxExporter:
 
         marks = text_node.get("marks", [])
 
-        # Check for track change marks
+        # Check for track change marks and raw style
         insertion_mark = None
         deletion_mark = None
+        raw_style_mark = None
         comment_ids = []
         basic_marks = []
 
@@ -408,6 +436,8 @@ class DocxExporter:
                 insertion_mark = mark.get("attrs", {})
             elif mark_type == "deletion":
                 deletion_mark = mark.get("attrs", {})
+            elif mark_type == "rawStyle":
+                raw_style_mark = mark.get("attrs", {})
             elif mark_type == "comment":
                 comment_id = mark.get("attrs", {}).get("commentId")
                 if comment_id:
@@ -417,21 +447,53 @@ class DocxExporter:
 
         # Handle track changes
         if insertion_mark:
-            self._add_insertion(para, text, insertion_mark, basic_marks)
+            self._add_insertion(para, text, insertion_mark, basic_marks, raw_style_mark)
         elif deletion_mark:
-            self._add_deletion(para, text, deletion_mark, basic_marks)
+            self._add_deletion(para, text, deletion_mark, basic_marks, raw_style_mark)
         else:
-            # Regular text
-            run = para.add_run(text)
-            self._apply_basic_marks(run, basic_marks)
+            # Regular text - use raw rPr if available for full style preservation
+            if raw_style_mark and raw_style_mark.get("rPr"):
+                self._add_run_with_raw_rPr(para, text, raw_style_mark["rPr"])
+            else:
+                run = para.add_run(text)
+                self._apply_basic_marks(run, basic_marks)
 
             # Track runs for comments
             for comment_id in comment_ids:
                 if comment_id not in self._comment_runs_map:
                     self._comment_runs_map[comment_id] = []
-                self._comment_runs_map[comment_id].append(run)
+                self._comment_runs_map[comment_id].append(run if not raw_style_mark else None)
 
-    def _add_insertion(self, para, text: str, attrs: dict, basic_marks: list) -> None:
+    def _add_run_with_raw_rPr(self, para, text: str, raw_rPr: str) -> None:
+        """
+        Add a run to a paragraph using raw rPr XML for full style preservation.
+
+        Args:
+            para: The python-docx Paragraph object
+            text: The text content
+            raw_rPr: Base64-encoded w:rPr element
+        """
+        p_elem = para._p
+
+        # Create run element
+        r = OxmlElement("w:r")
+
+        # Restore the full rPr from base64
+        rPr = base64_to_element(raw_rPr)
+        if rPr is not None:
+            r.append(rPr)
+
+        # Add text element
+        t = OxmlElement("w:t")
+        t.text = text
+        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+        r.append(t)
+
+        p_elem.append(r)
+
+    def _add_insertion(
+        self, para, text: str, attrs: dict, basic_marks: list, raw_style_mark: dict = None
+    ) -> None:
         """
         Add text as an insertion (tracked change).
 
@@ -449,8 +511,12 @@ class DocxExporter:
         # Create run inside insertion
         r = OxmlElement("w:r")
 
-        # Add run properties for formatting
-        if basic_marks:
+        # Add run properties - prefer raw rPr for full style preservation
+        if raw_style_mark and raw_style_mark.get("rPr"):
+            rPr = base64_to_element(raw_style_mark["rPr"])
+            if rPr is not None:
+                r.append(rPr)
+        elif basic_marks:
             rPr = OxmlElement("w:rPr")
             for mark in basic_marks:
                 if mark.get("type") == "bold":
@@ -469,7 +535,9 @@ class DocxExporter:
         ins.append(r)
         p_elem.append(ins)
 
-    def _add_deletion(self, para, text: str, attrs: dict, basic_marks: list) -> None:
+    def _add_deletion(
+        self, para, text: str, attrs: dict, basic_marks: list, raw_style_mark: dict = None
+    ) -> None:
         """
         Add text as a deletion (tracked change).
 
@@ -487,8 +555,12 @@ class DocxExporter:
         # Create run inside deletion
         r = OxmlElement("w:r")
 
-        # Add run properties for formatting
-        if basic_marks:
+        # Add run properties - prefer raw rPr for full style preservation
+        if raw_style_mark and raw_style_mark.get("rPr"):
+            rPr = base64_to_element(raw_style_mark["rPr"])
+            if rPr is not None:
+                r.append(rPr)
+        elif basic_marks:
             rPr = OxmlElement("w:rPr")
             for mark in basic_marks:
                 if mark.get("type") == "bold":

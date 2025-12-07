@@ -2,7 +2,6 @@ import { useEditor } from "@tiptap/react";
 import { useMemo, useCallback } from "react";
 import Document from "@tiptap/extension-document";
 import Text from "@tiptap/extension-text";
-import Heading from "@tiptap/extension-heading";
 import Bold from "@tiptap/extension-bold";
 import Italic from "@tiptap/extension-italic";
 import TableRow from "@tiptap/extension-table-row";
@@ -13,10 +12,12 @@ import History from "@tiptap/extension-history";
 import Section from "../../extensions/Section";
 import TableWithId from "../../extensions/TableWithId";
 import { ParagraphWithId } from "../../extensions/ParagraphWithId";
+import { HeadingWithStyle } from "../../extensions/HeadingWithStyle";
 import { PersistentSelection } from "../../extensions/PersistentSelection";
 import { Insertion } from "../../extensions/Insertion";
 import { Deletion } from "../../extensions/Deletion";
 import { Comment } from "../../extensions/Comment";
+import { RawStyle } from "../../extensions/RawStyle";
 import { TrackChangesMode } from "../../extensions/TrackChangesMode";
 import { SearchAndReplace } from "../../extensions/SearchAndReplace";
 import { RawStylesStorage } from "../../extensions/RawStylesStorage";
@@ -79,7 +80,7 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       Document,
       ParagraphWithId,
       Text,
-      Heading.configure({
+      HeadingWithStyle.configure({
         levels: headingLevels,
       }),
       Bold,
@@ -94,6 +95,7 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       Insertion,
       Deletion,
       Comment,
+      RawStyle,
       TrackChangesMode.configure({
         enabled: trackChangesEnabled,
         author: trackChangesAuthor,
