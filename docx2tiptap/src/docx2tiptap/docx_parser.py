@@ -10,389 +10,31 @@ Handles:
 - Comments
 """
 
-import base64
-import uuid
-from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Optional
 
 from docx import Document
 from docx.oxml.ns import qn
-from lxml import etree
 
 from .comments_parser import (
-    comments_to_dict,
     extract_comments_from_docx,
     get_text_with_comments,
 )
+from .models import (
+    BorderStyle,
+    CellBorders,
+    CellStyle,
+    Paragraph,
+    Table,
+    TableCell,
+    TableRow,
+    TableStyle,
+    TextRun,
+)
+from .numbering import NumberingTracker
 from .revisions_parser import get_text_with_revisions, merge_adjacent_segments
-
-
-@dataclass
-class TextRun:
-    """A run of text with formatting and revision/comment info."""
-
-    text: str
-    bold: bool = False
-    italic: bool = False
-    revision: Optional[dict] = (
-        None  # {'type': 'insertion'|'deletion', 'id': ..., 'author': ..., 'date': ...}
-    )
-    comment_ids: list[str] = field(
-        default_factory=list
-    )  # List of comment IDs this text is part of
-
-
-@dataclass
-class Paragraph:
-    """A paragraph containing text runs."""
-
-    runs: list[TextRun] = field(default_factory=list)
-    style: Optional[str] = None
-    numbering: Optional[str] = None  # Computed numbering like "2a"
-    level: int = 0  # Heading level (0 = not a heading)
-
-
-@dataclass
-class BorderStyle:
-    """Border styling for a single edge."""
-
-    style: Optional[str] = None  # single, double, dashed, dotted, nil, etc.
-    width: Optional[int] = None  # Width in eighths of a point
-    color: Optional[str] = None  # Hex color (e.g., "000000")
-
-
-@dataclass
-class CellBorders:
-    """Border styles for all edges of a cell."""
-
-    top: Optional[BorderStyle] = None
-    bottom: Optional[BorderStyle] = None
-    left: Optional[BorderStyle] = None
-    right: Optional[BorderStyle] = None
-
-
-@dataclass
-class CellStyle:
-    """Styling properties for a table cell."""
-
-    width: Optional[int] = None  # Width in twips (1/1440 inch)
-    background_color: Optional[str] = None  # Hex color (e.g., "f0f0f0")
-    vertical_align: Optional[str] = None  # top, center, bottom
-    borders: Optional[CellBorders] = None
-    text_align: Optional[str] = None  # left, center, right, both (justify)
-
-
-@dataclass
-class TableStyle:
-    """Styling properties for a table."""
-
-    style_name: Optional[str] = None  # Named style (e.g., "Table Grid")
-    alignment: Optional[str] = None  # left, center, right
-    column_widths: list[int] = field(default_factory=list)  # Widths in twips
-
-
-@dataclass
-class TableCell:
-    """A table cell containing block content."""
-
-    content: list = field(
-        default_factory=list
-    )  # List of Paragraph or nested Table
-    colspan: int = 1  # Number of columns this cell spans
-    rowspan: int = 1  # Number of rows this cell spans
-    style: Optional[CellStyle] = None
-    # Raw OOXML for cell properties (tcPr) - preserves all styling
-    raw_xml: Optional[str] = None
-
-
-@dataclass
-class TableRow:
-    """A table row containing cells."""
-
-    cells: list[TableCell] = field(default_factory=list)
-    # Raw OOXML for row properties (trPr) - preserves row height, header row, etc.
-    raw_xml: Optional[str] = None
-
-
-@dataclass
-class Table:
-    """A table with rows and cells."""
-
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    rows: list[TableRow] = field(default_factory=list)
-    style: Optional[TableStyle] = None
-    # Raw OOXML for table properties (tblPr) and grid (tblGrid)
-    raw_tblPr: Optional[str] = None
-    raw_tblGrid: Optional[str] = None
-
-
-@dataclass
-class Section:
-    """A document section with content and optional children."""
-
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    original_ref: Optional[str] = None
-    level: int = 1
-    title: str = ""
-    content: list = field(default_factory=list)  # Paragraph, Table
-    children: list["Section"] = field(default_factory=list)
-
-
-class NumberingTracker:
-    """Tracks list numbering state to compute actual numbers."""
-
-    def __init__(self, document: Document):
-        self.document = document
-        self.counters: dict[str, list[int]] = (
-            {}
-        )  # numId -> [level0_count, level1_count, ...]
-        self._numbering_formats = self._extract_numbering_formats()
-        self._style_numbering = self._extract_style_numbering()
-
-    def _extract_style_numbering(self) -> dict:
-        """Extract numbering info from paragraph styles (numId and ilvl)."""
-        style_num_info = {}  # styleId -> {'numId': ..., 'ilvl': ...}
-
-        try:
-            styles_part = self.document.part.styles
-            if styles_part is None:
-                return style_num_info
-            styles_xml = styles_part._element
-        except (KeyError, AttributeError):
-            return style_num_info
-
-        # First pass: collect direct numPr from styles
-        for style in styles_xml.findall(qn("w:style")):
-            style_id = style.get(qn("w:styleId"))
-            if not style_id:
-                continue
-
-            pPr = style.find(qn("w:pPr"))
-            if pPr is not None:
-                numPr = pPr.find(qn("w:numPr"))
-                if numPr is not None:
-                    ilvl_elem = numPr.find(qn("w:ilvl"))
-                    numId_elem = numPr.find(qn("w:numId"))
-
-                    ilvl = (
-                        int(ilvl_elem.get(qn("w:val")))
-                        if ilvl_elem is not None
-                        else 0
-                    )
-                    numId = (
-                        numId_elem.get(qn("w:val"))
-                        if numId_elem is not None
-                        else None
-                    )
-
-                    if numId and numId != "0":
-                        style_num_info[style_id] = {
-                            "numId": numId,
-                            "ilvl": ilvl,
-                        }
-
-        # Second pass: resolve basedOn inheritance for styles without direct numPr
-        # We need multiple passes to handle deep inheritance chains
-        for _ in range(10):  # Max 10 levels of inheritance
-            made_changes = False
-            for style in styles_xml.findall(qn("w:style")):
-                style_id = style.get(qn("w:styleId"))
-                if not style_id or style_id in style_num_info:
-                    continue
-
-                basedOn = style.find(qn("w:basedOn"))
-                if basedOn is not None:
-                    base_style_id = basedOn.get(qn("w:val"))
-                    if base_style_id and base_style_id in style_num_info:
-                        style_num_info[style_id] = style_num_info[
-                            base_style_id
-                        ].copy()
-                        made_changes = True
-
-            if not made_changes:
-                break
-
-        return style_num_info
-
-    def get_numbering_from_style(
-        self, style_name: str
-    ) -> tuple[str, int] | None:
-        """Get numId and ilvl from a style name, resolving inheritance."""
-        # Style names may differ from style IDs - try to find a match
-        # First try exact match on style ID
-        if style_name in self._style_numbering:
-            info = self._style_numbering[style_name]
-            return info["numId"], info["ilvl"]
-
-        # Try matching by normalizing (remove spaces)
-        normalized = style_name.replace(" ", "")
-        for style_id, info in self._style_numbering.items():
-            if style_id.replace(" ", "") == normalized:
-                return info["numId"], info["ilvl"]
-
-        return None
-
-    def _extract_numbering_formats(self) -> dict:
-        """Extract numbering format definitions from document."""
-        formats = {}
-        try:
-            numbering_part = self.document.part.numbering_part
-        except (KeyError, NotImplementedError):
-            # Document has no numbering definitions
-            return formats
-        if numbering_part is None:
-            return formats
-
-        # Parse the numbering definitions
-        numbering_xml = numbering_part._element
-
-        # First pass: build a map of style names to their defining abstractNum IDs
-        # Some abstractNums use numStyleLink to reference styles defined elsewhere
-        style_to_abstract_id = {}
-        for abstract_num in numbering_xml.findall(qn("w:abstractNum")):
-            abstract_id = abstract_num.get(qn("w:abstractNumId"))
-            style_link = abstract_num.find(qn("w:styleLink"))
-            if style_link is not None:
-                style_name = style_link.get(qn("w:val"))
-                style_to_abstract_id[style_name] = abstract_id
-
-        # Second pass: extract level definitions from each abstractNum
-        for abstract_num in numbering_xml.findall(qn("w:abstractNum")):
-            abstract_id = abstract_num.get(qn("w:abstractNumId"))
-            levels = {}
-            for lvl in abstract_num.findall(qn("w:lvl")):
-                ilvl = int(lvl.get(qn("w:ilvl")))
-                num_fmt_elem = lvl.find(qn("w:numFmt"))
-                lvl_text_elem = lvl.find(qn("w:lvlText"))
-
-                num_fmt = (
-                    num_fmt_elem.get(qn("w:val"))
-                    if num_fmt_elem is not None
-                    else "decimal"
-                )
-                lvl_text = (
-                    lvl_text_elem.get(qn("w:val"))
-                    if lvl_text_elem is not None
-                    else "%1."
-                )
-
-                levels[ilvl] = {"format": num_fmt, "text": lvl_text}
-            formats[abstract_id] = levels
-
-        # Third pass: resolve numStyleLink references
-        # If an abstractNum uses numStyleLink, copy levels from the defining abstractNum
-        for abstract_num in numbering_xml.findall(qn("w:abstractNum")):
-            abstract_id = abstract_num.get(qn("w:abstractNumId"))
-            num_style_link = abstract_num.find(qn("w:numStyleLink"))
-            if num_style_link is not None:
-                style_name = num_style_link.get(qn("w:val"))
-                # Find the abstractNum that defines this style
-                if style_name in style_to_abstract_id:
-                    defining_abstract_id = style_to_abstract_id[style_name]
-                    if defining_abstract_id in formats:
-                        formats[abstract_id] = formats[defining_abstract_id]
-
-        # Map numId to abstractNumId and extract startOverride values
-        self._num_to_abstract = {}
-        self._start_overrides = {}  # numId -> {ilvl: start_value}
-        for num in numbering_xml.findall(qn("w:num")):
-            num_id = num.get(qn("w:numId"))
-            abstract_ref = num.find(qn("w:abstractNumId"))
-            if abstract_ref is not None:
-                self._num_to_abstract[num_id] = abstract_ref.get(qn("w:val"))
-
-            # Check for lvlOverride with startOverride
-            for lvl_override in num.findall(qn("w:lvlOverride")):
-                ilvl = int(lvl_override.get(qn("w:ilvl")))
-                start_override = lvl_override.find(qn("w:startOverride"))
-                if start_override is not None:
-                    start_val = int(start_override.get(qn("w:val")))
-                    if num_id not in self._start_overrides:
-                        self._start_overrides[num_id] = {}
-                    # Store start-1 because get_number increments before returning
-                    self._start_overrides[num_id][ilvl] = start_val - 1
-
-        return formats
-
-    def get_number(self, num_id: str, ilvl: int) -> str:
-        """Get the computed number for a list item."""
-        if num_id not in self.counters:
-            self.counters[num_id] = [0] * 10  # Support up to 10 levels
-            # Apply startOverride values if present
-            if num_id in self._start_overrides:
-                for override_ilvl, start_val in self._start_overrides[
-                    num_id
-                ].items():
-                    self.counters[num_id][override_ilvl] = start_val
-
-        # Increment current level, reset deeper levels
-        self.counters[num_id][ilvl] += 1
-        for i in range(ilvl + 1, 10):
-            self.counters[num_id][i] = 0
-
-        # Get format info
-        abstract_id = self._num_to_abstract.get(num_id)
-        if abstract_id and abstract_id in self._numbering_formats:
-            level_info = self._numbering_formats[abstract_id].get(ilvl, {})
-            num_fmt = level_info.get("format", "decimal")
-            lvl_text = level_info.get("text", "%1.")
-        else:
-            num_fmt = "decimal"
-            lvl_text = "%1."
-
-        # Build the number string
-        result = lvl_text
-        for i in range(ilvl + 1):
-            count = self.counters[num_id][i]
-            formatted = self._format_number(
-                count, num_fmt if i == ilvl else "decimal"
-            )
-            result = result.replace(f"%{i+1}", formatted)
-
-        return result
-
-    def _format_number(self, n: int, fmt: str) -> str:
-        """Format a number according to the numbering format."""
-        if fmt == "decimal":
-            return str(n)
-        elif fmt == "lowerLetter":
-            return chr(ord("a") + n - 1) if 1 <= n <= 26 else str(n)
-        elif fmt == "upperLetter":
-            return chr(ord("A") + n - 1) if 1 <= n <= 26 else str(n)
-        elif fmt == "lowerRoman":
-            return self._to_roman(n).lower()
-        elif fmt == "upperRoman":
-            return self._to_roman(n)
-        elif fmt == "bullet":
-            return "•"
-        else:
-            return str(n)
-
-    def _to_roman(self, n: int) -> str:
-        """Convert integer to Roman numerals."""
-        if n <= 0:
-            return str(n)
-        result = ""
-        for value, numeral in [
-            (1000, "M"),
-            (900, "CM"),
-            (500, "D"),
-            (400, "CD"),
-            (100, "C"),
-            (90, "XC"),
-            (50, "L"),
-            (40, "XL"),
-            (10, "X"),
-            (9, "IX"),
-            (5, "V"),
-            (4, "IV"),
-            (1, "I"),
-        ]:
-            while n >= value:
-                result += numeral
-                n -= value
-        return result
+from .serializers import elements_to_dict
+from .utils import element_to_base64
 
 
 def parse_paragraph(
@@ -483,22 +125,6 @@ def parse_paragraph(
     return Paragraph(
         runs=runs, style=style_name, numbering=numbering, level=level
     )
-
-
-def _element_to_base64(element) -> Optional[str]:
-    """Serialize an lxml element to base64-encoded XML string."""
-    if element is None:
-        return None
-    xml_bytes = etree.tostring(element, encoding="unicode")
-    return base64.b64encode(xml_bytes.encode("utf-8")).decode("ascii")
-
-
-def _base64_to_element(b64_string: str):
-    """Deserialize a base64-encoded XML string to an lxml element."""
-    if not b64_string:
-        return None
-    xml_bytes = base64.b64decode(b64_string.encode("ascii"))
-    return etree.fromstring(xml_bytes)
 
 
 def _parse_border_style(border_elem) -> Optional[BorderStyle]:
@@ -644,8 +270,8 @@ def parse_table(
     tbl = table._tbl
     tblPr = tbl.find(qn("w:tblPr"))
     tblGrid = tbl.find(qn("w:tblGrid"))
-    parsed_table.raw_tblPr = _element_to_base64(tblPr)
-    parsed_table.raw_tblGrid = _element_to_base64(tblGrid)
+    parsed_table.raw_tblPr = element_to_base64(tblPr)
+    parsed_table.raw_tblGrid = element_to_base64(tblGrid)
 
     # Parse table-level styles (for backward compatibility)
     parsed_table.style = _parse_table_style(table)
@@ -660,7 +286,7 @@ def parse_table(
         # Capture raw row properties (trPr)
         tr = row._tr
         trPr = tr.find(qn("w:trPr"))
-        parsed_row.raw_xml = _element_to_base64(trPr)
+        parsed_row.raw_xml = element_to_base64(trPr)
 
         grid_col = 0  # Track position in the grid
 
@@ -685,7 +311,7 @@ def parse_table(
 
             # Capture raw cell properties (tcPr)
             tcPr = tc.find(qn("w:tcPr"))
-            parsed_cell.raw_xml = _element_to_base64(tcPr)
+            parsed_cell.raw_xml = element_to_base64(tcPr)
 
             # If there was a previous vertical merge in this column, finalize its rowspan
             if grid_col in vmerge_tracking:
@@ -771,146 +397,3 @@ def parse_docx(file_content: bytes) -> tuple[list, dict]:
                 elements.append(parse_table(t, numbering_tracker))
 
     return elements, comments
-
-
-def _border_style_to_dict(border: Optional[BorderStyle]) -> Optional[dict]:
-    """Convert BorderStyle to dict."""
-    if border is None:
-        return None
-    return {
-        "style": border.style,
-        "width": border.width,
-        "color": border.color,
-    }
-
-
-def _cell_borders_to_dict(borders: Optional[CellBorders]) -> Optional[dict]:
-    """Convert CellBorders to dict."""
-    if borders is None:
-        return None
-    result = {}
-    if borders.top:
-        result["top"] = _border_style_to_dict(borders.top)
-    if borders.bottom:
-        result["bottom"] = _border_style_to_dict(borders.bottom)
-    if borders.left:
-        result["left"] = _border_style_to_dict(borders.left)
-    if borders.right:
-        result["right"] = _border_style_to_dict(borders.right)
-    return result if result else None
-
-
-def _cell_style_to_dict(style: Optional[CellStyle]) -> Optional[dict]:
-    """Convert CellStyle to dict."""
-    if style is None:
-        return None
-    result = {}
-    if style.width is not None:
-        result["width"] = style.width
-    if style.background_color:
-        result["backgroundColor"] = style.background_color
-    if style.vertical_align:
-        result["verticalAlign"] = style.vertical_align
-    if style.borders:
-        borders = _cell_borders_to_dict(style.borders)
-        if borders:
-            result["borders"] = borders
-    if style.text_align:
-        result["textAlign"] = style.text_align
-    return result if result else None
-
-
-def _table_style_to_dict(style: Optional[TableStyle]) -> Optional[dict]:
-    """Convert TableStyle to dict."""
-    if style is None:
-        return None
-    result = {}
-    if style.style_name:
-        result["styleName"] = style.style_name
-    if style.alignment:
-        result["alignment"] = style.alignment
-    if style.column_widths:
-        result["columnWidths"] = style.column_widths
-    return result if result else None
-
-
-def elements_to_dict(elements: list) -> list[dict]:
-    """Convert parsed elements to JSON-serializable dictionaries."""
-    result = []
-
-    for elem in elements:
-        if isinstance(elem, Paragraph):
-            runs_data = []
-            for r in elem.runs:
-                run_dict = {"text": r.text, "bold": r.bold, "italic": r.italic}
-                if r.revision:
-                    run_dict["revision"] = r.revision
-                if r.comment_ids:
-                    run_dict["commentIds"] = r.comment_ids
-                runs_data.append(run_dict)
-
-            result.append(
-                {
-                    "type": "paragraph",
-                    "runs": runs_data,
-                    "style": elem.style,
-                    "numbering": elem.numbering,
-                    "level": elem.level,
-                }
-            )
-        elif isinstance(elem, Table):
-            # Build rows with raw XML preservation
-            rows_data = []
-            for row in elem.rows:
-                row_dict = {
-                    "cells": [
-                        {
-                            "content": elements_to_dict(cell.content),
-                            "colspan": cell.colspan,
-                            "rowspan": cell.rowspan,
-                            **(
-                                {"style": _cell_style_to_dict(cell.style)}
-                                if cell.style
-                                else {}
-                            ),
-                            **(
-                                {"rawXml": cell.raw_xml} if cell.raw_xml else {}
-                            ),
-                        }
-                        for cell in row.cells
-                    ]
-                }
-                # Add raw row XML if present
-                if row.raw_xml:
-                    row_dict["rawXml"] = row.raw_xml
-                rows_data.append(row_dict)
-
-            table_dict = {
-                "type": "table",
-                "id": elem.id,
-                "rows": rows_data,
-            }
-            if elem.style:
-                style_dict = _table_style_to_dict(elem.style)
-                if style_dict:
-                    table_dict["style"] = style_dict
-            # Add raw table XML if present
-            if elem.raw_tblPr:
-                table_dict["rawTblPr"] = elem.raw_tblPr
-            if elem.raw_tblGrid:
-                table_dict["rawTblGrid"] = elem.raw_tblGrid
-            result.append(table_dict)
-        elif isinstance(elem, Section):
-            result.append(
-                {
-                    "type": "section",
-                    "id": elem.id,
-                    "originalRef": elem.original_ref,
-                    "level": elem.level,
-                    "title": elem.title,
-                    "content": elements_to_dict(elem.content),
-                    "children": elements_to_dict(elem.children),
-                }
-            )
-
-    return result

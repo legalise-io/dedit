@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Skill(superpowers:brainstorming)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python -c:*)",
+      "Bash(source backend/.venv/bin/activate)"
     ],
     "deny": [],
     "ask": []

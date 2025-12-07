@@ -6,11 +6,13 @@ Word stores track changes as:
 - <w:del> elements for deletions (with w:author, w:date attributes)
 
 These wrap the affected content (runs, text, etc.)
+
+Note: The Revision dataclass and extract_revisions_from_paragraph function
+were removed in the 2024-12-07 refactoring as they were unused. The revision
+information is now extracted directly in get_text_with_revisions.
 """
 
 import uuid
-from dataclasses import dataclass, field
-from typing import Optional
 
 from docx.oxml.ns import qn
 
@@ -20,111 +22,23 @@ def generate_unique_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-@dataclass
-class Revision:
-    """A tracked change (insertion or deletion)."""
-
-    id: str
-    revision_type: str  # 'insertion' or 'deletion'
-    author: str
-    date: Optional[str]
-    # Position info for mapping to text
-    paragraph_index: int = 0
-    run_index: int = 0
-
-
-def extract_revisions_from_paragraph(
-    para_element, para_index: int
-) -> tuple[list[Revision], dict]:
-    """
-    Extract revision information from a paragraph element.
-
-    Returns:
-        tuple: (list of Revision objects, dict mapping run positions to revision info)
-    """
-    revisions = []
-    run_revision_map = {}  # Maps (para_idx, run_idx) -> revision info
-
-    revision_id = 0
-
-    # Find all w:ins elements (insertions)
-    for ins in para_element.iter(qn("w:ins")):
-        author = ins.get(qn("w:author")) or "Unknown"
-        date = ins.get(qn("w:date"))
-        rev_id = f"ins-{para_index}-{revision_id}"
-        revision_id += 1
-
-        revision = Revision(
-            id=rev_id,
-            revision_type="insertion",
-            author=author,
-            date=date,
-            paragraph_index=para_index,
-        )
-        revisions.append(revision)
-
-        # Find all runs within this insertion
-        for run in ins.iter(qn("w:r")):
-            # Store mapping from run element to revision
-            run_revision_map[id(run)] = {
-                "type": "insertion",
-                "id": rev_id,
-                "author": author,
-                "date": date,
-            }
-
-    # Find all w:del elements (deletions)
-    for deletion in para_element.iter(qn("w:del")):
-        author = deletion.get(qn("w:author")) or "Unknown"
-        date = deletion.get(qn("w:date"))
-        rev_id = f"del-{para_index}-{revision_id}"
-        revision_id += 1
-
-        revision = Revision(
-            id=rev_id,
-            revision_type="deletion",
-            author=author,
-            date=date,
-            paragraph_index=para_index,
-        )
-        revisions.append(revision)
-
-        # Find all runs within this deletion
-        for run in deletion.iter(qn("w:r")):
-            run_revision_map[id(run)] = {
-                "type": "deletion",
-                "id": rev_id,
-                "author": author,
-                "date": date,
-            }
-
-        # Also check for w:delText elements (deleted text without run wrapper)
-        for del_text in deletion.iter(qn("w:delText")):
-            run_revision_map[id(del_text)] = {
-                "type": "deletion",
-                "id": rev_id,
-                "author": author,
-                "date": date,
-            }
-
-    return revisions, run_revision_map
-
-
 def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
     """
     Extract text runs from a paragraph, preserving revision marks.
 
-    Returns a list of text segments with their revision status:
-    [
-        {'text': 'normal text', 'revision': None},
-        {'text': 'inserted text', 'revision': {'type': 'insertion', 'author': '...', ...}},
-        {'text': 'deleted text', 'revision': {'type': 'deletion', 'author': '...', ...}},
-    ]
+    Args:
+        para_element: The lxml paragraph element to process
+        para_index: Index of the paragraph in the document (for ID generation)
+
+    Returns:
+        A list of text segments with their revision status:
+        [
+            {'text': 'normal text', 'revision': None, 'bold': False, 'italic': False},
+            {'text': 'inserted text', 'revision': {'type': 'insertion', 'author': '...', 'id': '...', 'date': '...'}, ...},
+            {'text': 'deleted text', 'revision': {'type': 'deletion', 'author': '...', 'id': '...', 'date': '...'}, ...},
+        ]
     """
     segments = []
-    _, run_revision_map = extract_revisions_from_paragraph(
-        para_element, para_index
-    )
 
     def process_element(element, current_revision=None):
         tag = element.tag
@@ -233,6 +147,12 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
 def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
     """
     Merge adjacent text segments that have the same revision and formatting.
+
+    Args:
+        segments: List of text segments from get_text_with_revisions
+
+    Returns:
+        Merged list with fewer, larger segments where possible
     """
     if not segments:
         return []
