@@ -224,9 +224,11 @@ class DocxExporter:
                 pass  # Style not found in document, skip
 
         content = node.get("content", [])
-        for text_node in content:
-            if text_node.get("type") == "text":
-                self._add_text_with_marks(para, text_node)
+        for child_node in content:
+            if child_node.get("type") == "text":
+                self._add_text_with_marks(para, child_node)
+            elif child_node.get("type") == "hardBreak":
+                self._add_break(para, child_node)
 
     def _process_heading(self, node: dict, table_cell=None) -> None:
         """Process a heading node."""
@@ -242,11 +244,13 @@ class DocxExporter:
                     para.style = style_name
                 except KeyError:
                     pass
-            for text_node in content:
-                if text_node.get("type") == "text":
-                    run = para.add_run(text_node.get("text", ""))
+            for child_node in content:
+                if child_node.get("type") == "text":
+                    run = para.add_run(child_node.get("text", ""))
                     run.bold = True
-                    self._apply_basic_marks(run, text_node.get("marks", []))
+                    self._apply_basic_marks(run, child_node.get("marks", []))
+                elif child_node.get("type") == "hardBreak":
+                    self._add_break(para, child_node)
         else:
             # If we have a custom style name, use it; otherwise use standard heading
             if style_name:
@@ -259,9 +263,11 @@ class DocxExporter:
             else:
                 para = self._doc.add_heading(level=level)
 
-            for text_node in content:
-                if text_node.get("type") == "text":
-                    self._add_text_with_marks(para, text_node)
+            for child_node in content:
+                if child_node.get("type") == "text":
+                    self._add_text_with_marks(para, child_node)
+                elif child_node.get("type") == "hardBreak":
+                    self._add_break(para, child_node)
 
     def _process_table(self, node: dict) -> None:
         """Process a table node with support for merged cells (colspan/rowspan) and styling."""
@@ -391,15 +397,19 @@ class DocxExporter:
         for i, content_node in enumerate(cell_content):
             if i == 0 and cell.paragraphs:
                 if content_node.get("type") == "paragraph":
-                    for text_node in content_node.get("content", []):
-                        if text_node.get("type") == "text":
-                            self._add_text_with_marks(cell.paragraphs[0], text_node)
+                    for child_node in content_node.get("content", []):
+                        if child_node.get("type") == "text":
+                            self._add_text_with_marks(cell.paragraphs[0], child_node)
+                        elif child_node.get("type") == "hardBreak":
+                            self._add_break(cell.paragraphs[0], child_node)
                 elif content_node.get("type") == "heading":
-                    for text_node in content_node.get("content", []):
-                        if text_node.get("type") == "text":
-                            run = cell.paragraphs[0].add_run(text_node.get("text", ""))
+                    for child_node in content_node.get("content", []):
+                        if child_node.get("type") == "text":
+                            run = cell.paragraphs[0].add_run(child_node.get("text", ""))
                             run.bold = True
-                            self._apply_basic_marks(run, text_node.get("marks", []))
+                            self._apply_basic_marks(run, child_node.get("marks", []))
+                        elif child_node.get("type") == "hardBreak":
+                            self._add_break(cell.paragraphs[0], child_node)
             else:
                 self._process_node(content_node, table_cell=cell)
 
@@ -586,6 +596,32 @@ class DocxExporter:
                 run.bold = True
             elif mark_type == "italic":
                 run.italic = True
+
+    def _add_break(self, para, node: dict) -> None:
+        """
+        Add a break element to a paragraph.
+
+        Args:
+            para: The python-docx Paragraph object
+            node: The TipTap hardBreak node
+        """
+        p_elem = para._p
+        attrs = node.get("attrs", {})
+        break_type = attrs.get("breakType")
+
+        # Create run to contain the break
+        r = OxmlElement("w:r")
+
+        # Create break element
+        br = OxmlElement("w:br")
+        if break_type == "page":
+            br.set(qn("w:type"), "page")
+        elif break_type == "column":
+            br.set(qn("w:type"), "column")
+        # else: line break (no type attribute needed)
+
+        r.append(br)
+        p_elem.append(r)
 
     def _restore_raw_cell_properties(self, cell, raw_xml: str) -> None:
         """Restore raw tcPr element from base64-encoded XML."""

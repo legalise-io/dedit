@@ -13,6 +13,7 @@ import Section from "../../extensions/Section";
 import TableWithId from "../../extensions/TableWithId";
 import { ParagraphWithId } from "../../extensions/ParagraphWithId";
 import { HeadingWithStyle } from "../../extensions/HeadingWithStyle";
+import { HardBreakWithType } from "../../extensions/HardBreakWithType";
 import { PersistentSelection } from "../../extensions/PersistentSelection";
 import { Insertion } from "../../extensions/Insertion";
 import { Deletion } from "../../extensions/Deletion";
@@ -85,6 +86,7 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       }),
       Bold,
       Italic,
+      HardBreakWithType,
       Section,
       TableWithId.configure({
         resizable: tableResizable,

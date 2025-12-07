@@ -138,6 +138,16 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                                 "raw_rPr": raw_rPr,
                             }
                         )
+                elif child.tag == qn("w:br"):
+                    # Handle break elements (page breaks, line breaks, etc.)
+                    br_type = child.get(qn("w:type"))
+                    segments.append(
+                        {
+                            "break": True,
+                            "break_type": br_type,  # "page", "column", "textWrapping", or None (line break)
+                            "revision": current_revision,
+                        }
+                    )
             return
 
         # Recurse into other elements
@@ -168,6 +178,13 @@ def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
     current = segments[0].copy()
 
     for seg in segments[1:]:
+        # Break segments should never be merged
+        if seg.get("break") or current.get("break"):
+            if current.get("text") or current.get("break"):
+                merged.append(current)
+            current = seg.copy()
+            continue
+
         # Check if can merge
         same_revision = (
             current["revision"] is None and seg["revision"] is None
@@ -185,11 +202,11 @@ def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
         if same_revision and same_format and same_raw_style:
             current["text"] += seg["text"]
         else:
-            if current["text"]:
+            if current.get("text"):
                 merged.append(current)
             current = seg.copy()
 
-    if current["text"]:
+    if current.get("text") or current.get("break"):
         merged.append(current)
 
     return merged

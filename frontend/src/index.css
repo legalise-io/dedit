@@ -2360,6 +2360,31 @@ del.selected-change,
     border-radius: 2px;
 }
 
+/* Page break indicator */
+.tiptap .page-break {
+    display: block;
+    width: 100%;
+    height: 1px;
+    margin: 1rem 0;
+    border: none;
+    border-top: 2px dashed #ccc;
+    position: relative;
+}
+
+.tiptap .page-break::after {
+    content: "Page Break";
+    position: absolute;
+    top: -0.6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: white;
+    padding: 0 0.5rem;
+    font-size: 0.7rem;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
 /* Collaboration cursor styles */
 .collaboration-cursor__caret {
     position: relative;

@@ -93,6 +93,9 @@ class TextRun:
     comment_ids: list[str] = field(default_factory=list)
     # Raw OOXML for run properties (w:rPr) - preserves fonts, colors, etc.
     raw_rPr: Optional[str] = None
+    # Break information (page break, line break, etc.)
+    is_break: bool = False
+    break_type: Optional[str] = None  # "page", "column", "textWrapping", or None (line break)
 
 
 @dataclass

@@ -59,7 +59,17 @@ def parse_paragraph(
     # Convert segments to TextRuns
     runs = []
     for seg in revision_segments:
-        if seg["text"]:
+        if seg.get("break"):
+            # Handle break segments (page breaks, line breaks, etc.)
+            runs.append(
+                TextRun(
+                    text="",
+                    is_break=True,
+                    break_type=seg.get("break_type"),
+                    revision=seg.get("revision"),
+                )
+            )
+        elif seg.get("text"):
             # Try to find matching comment info
             comment_ids = comment_map.get(seg["text"], [])
 

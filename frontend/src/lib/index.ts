@@ -108,6 +108,7 @@ export { Section } from "../extensions/Section";
 export { TableWithId } from "../extensions/TableWithId";
 export { ParagraphWithId } from "../extensions/ParagraphWithId";
 export { HeadingWithStyle } from "../extensions/HeadingWithStyle";
+export { HardBreakWithType } from "../extensions/HardBreakWithType";
 export { PersistentSelection } from "../extensions/PersistentSelection";
 export { SearchAndReplace } from "../extensions/SearchAndReplace";
 

@@ -67,8 +67,22 @@ class TipTapConverter:
 
         return {"type": "doc", "content": content}
 
-    def _text_run_to_node(self, run: TextRun) -> dict:
-        """Convert a TextRun to a TipTap text node with marks."""
+    def _text_run_to_node(self, run: TextRun) -> dict | None:
+        """Convert a TextRun to a TipTap text node with marks, or a hardBreak node."""
+        # Handle break runs
+        if run.is_break:
+            if run.break_type == "page":
+                return {"type": "hardBreak", "attrs": {"breakType": "page"}}
+            elif run.break_type == "column":
+                return {"type": "hardBreak", "attrs": {"breakType": "column"}}
+            else:
+                # Regular line break or text wrapping
+                return {"type": "hardBreak"}
+
+        # Skip empty text runs
+        if not run.text:
+            return None
+
         node = {"type": "text", "text": run.text}
 
         marks = self._build_marks(run)
@@ -132,7 +146,11 @@ class TipTapConverter:
 
     def _paragraph_to_node(self, para: Paragraph) -> dict:
         """Convert a Paragraph to a TipTap paragraph or heading node."""
-        content = [self._text_run_to_node(run) for run in para.runs if run.text]
+        content = [
+            node for run in para.runs
+            for node in [self._text_run_to_node(run)]
+            if node is not None
+        ]
 
         # Handle numbered items - prepend the number to the content
         if para.numbering and content:
