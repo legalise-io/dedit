@@ -108,36 +108,46 @@ def parse_paragraph(
     # Get numbering info - check direct numPr first, then fall back to style
     numbering = None
     raw_pPr = None
-    if numbering_tracker:
-        num_id = None
-        ilvl = None
+    num_id = None
+    ilvl = None
 
-        # First check for direct numPr on the paragraph
-        if para._element.pPr is not None:
-            num_pr = para._element.pPr.find(qn("w:numPr"))
-            if num_pr is not None:
-                ilvl_elem = num_pr.find(qn("w:ilvl"))
-                num_id_elem = num_pr.find(qn("w:numId"))
-                if ilvl_elem is not None and num_id_elem is not None:
-                    ilvl = int(ilvl_elem.get(qn("w:val")))
-                    num_id = num_id_elem.get(qn("w:val"))
+    # Check for direct paragraph formatting (pPr)
+    if para._element.pPr is not None:
+        pPr = para._element.pPr
 
-                # If numId="0", this is an explicit "no numbering" override
-                # Preserve the pPr so we can restore it on export
-                if num_id == "0":
-                    raw_pPr = element_to_base64(para._element.pPr)
+        # Check for direct numPr on the paragraph
+        num_pr = pPr.find(qn("w:numPr"))
+        if num_pr is not None:
+            ilvl_elem = num_pr.find(qn("w:ilvl"))
+            num_id_elem = num_pr.find(qn("w:numId"))
+            if ilvl_elem is not None and num_id_elem is not None:
+                ilvl = int(ilvl_elem.get(qn("w:val")))
+                num_id = num_id_elem.get(qn("w:val"))
 
-        # If no direct numPr, check if the style defines numbering
-        if num_id is None and style_name:
-            style_numbering = numbering_tracker.get_numbering_from_style(
-                style_name
-            )
-            if style_numbering:
-                num_id, ilvl = style_numbering
+        # Preserve pPr if there's ANY direct formatting beyond just pStyle
+        # This includes: numPr, ind (indent), spacing, pBdr (borders), rPr, etc.
+        # We need to preserve these for lossless round-tripping
+        has_direct_formatting = False
+        for child in pPr:
+            tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            if tag != "pStyle":  # pStyle is just a reference, not direct formatting
+                has_direct_formatting = True
+                break
 
-        # Compute the actual number if we have numbering info
-        if num_id and num_id != "0":
-            numbering = numbering_tracker.get_number(num_id, ilvl)
+        if has_direct_formatting:
+            raw_pPr = element_to_base64(pPr)
+
+    # If no direct numPr, check if the style defines numbering
+    if numbering_tracker and num_id is None and style_name:
+        style_numbering = numbering_tracker.get_numbering_from_style(
+            style_name
+        )
+        if style_numbering:
+            num_id, ilvl = style_numbering
+
+    # Compute the actual number if we have numbering info
+    if numbering_tracker and num_id and num_id != "0":
+        numbering = numbering_tracker.get_number(num_id, ilvl)
 
     return Paragraph(
         runs=runs, style=style_name, numbering=numbering, level=level, raw_pPr=raw_pPr

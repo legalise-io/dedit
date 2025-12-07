@@ -698,8 +698,14 @@ class DocxExporter:
         """
         Restore raw pPr element from base64-encoded XML.
 
-        This preserves paragraph properties like numPr with numId="0"
-        which explicitly turns off numbering even when a numbered style is applied.
+        This preserves ALL direct paragraph formatting for lossless round-tripping:
+        - numPr (numbering, including numId="0" to disable numbering)
+        - ind (indentation)
+        - spacing (paragraph spacing)
+        - pBdr (paragraph borders)
+        - rPr (run properties default)
+        - jc (justification)
+        - And any other direct formatting elements
         """
         if not raw_xml:
             return
@@ -709,29 +715,72 @@ class DocxExporter:
         if new_pPr is None:
             return
 
-        # Get existing pPr or create one
+        # Get existing pPr (python-docx creates one when we set para.style)
         existing_pPr = p.find(qn("w:pPr"))
 
-        # We need to merge - keep the pStyle from existing but add numPr from new
-        # This is because python-docx sets pStyle when we assign para.style
         if existing_pPr is not None:
-            # Look for numPr in the restored pPr and add it to existing
-            new_numPr = new_pPr.find(qn("w:numPr"))
-            if new_numPr is not None:
-                # Remove any existing numPr first
-                old_numPr = existing_pPr.find(qn("w:numPr"))
-                if old_numPr is not None:
-                    existing_pPr.remove(old_numPr)
-                # Insert numPr after pStyle (if present) for proper ordering
-                pStyle = existing_pPr.find(qn("w:pStyle"))
-                if pStyle is not None:
-                    pStyle_idx = list(existing_pPr).index(pStyle)
-                    existing_pPr.insert(pStyle_idx + 1, new_numPr)
-                else:
-                    existing_pPr.insert(0, new_numPr)
+            # Merge: keep pStyle from existing, add all other elements from new_pPr
+            # This is because python-docx sets pStyle when we assign para.style
+            for child in list(new_pPr):
+                tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                if tag == "pStyle":
+                    # Skip pStyle - we keep the one python-docx set
+                    continue
+
+                # Remove any existing element with the same tag
+                existing_child = existing_pPr.find(child.tag)
+                if existing_child is not None:
+                    existing_pPr.remove(existing_child)
+
+                # Add the new element - insert in proper position
+                # OOXML has a specific element order requirement
+                self._insert_pPr_element(existing_pPr, child)
         else:
             # No existing pPr, just add the new one
             p.insert(0, new_pPr)
+
+    def _insert_pPr_element(self, pPr, element) -> None:
+        """
+        Insert an element into pPr in the correct OOXML order.
+
+        OOXML requires elements in a specific sequence. This ensures
+        elements are inserted at the right position.
+        """
+        # OOXML pPr element order (simplified - covers most common elements)
+        # See: http://www.datypic.com/sc/ooxml/e-w_pPr-1.html
+        element_order = [
+            "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr",
+            "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd",
+            "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap",
+            "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN",
+            "bidi", "adjustRightInd", "snapToGrid", "spacing", "ind",
+            "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc",
+            "textDirection", "textAlignment", "textboxTightWrap",
+            "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange"
+        ]
+
+        tag = element.tag.split("}")[-1] if "}" in element.tag else element.tag
+
+        try:
+            target_idx = element_order.index(tag)
+        except ValueError:
+            # Unknown element, append at end
+            pPr.append(element)
+            return
+
+        # Find the right position to insert
+        for i, existing in enumerate(pPr):
+            existing_tag = existing.tag.split("}")[-1] if "}" in existing.tag else existing.tag
+            try:
+                existing_idx = element_order.index(existing_tag)
+                if existing_idx > target_idx:
+                    pPr.insert(i, element)
+                    return
+            except ValueError:
+                continue
+
+        # If we get here, append at end
+        pPr.append(element)
 
     def _restore_raw_cell_properties(self, cell, raw_xml: str) -> None:
         """Restore raw tcPr element from base64-encoded XML."""
