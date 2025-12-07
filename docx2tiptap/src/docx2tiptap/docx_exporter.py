@@ -350,6 +350,7 @@ class DocxExporter:
         raw_pPr = attrs.get("rawPPr")
         num_ilvl = attrs.get("numIlvl")  # Current indentation level from TipTap
         num_id = attrs.get("numId")  # Numbering definition ID
+        format_change = attrs.get("formatChange")  # Tracked formatting change
         # styleNumbering is stored as an attr, not as text content
         # Word will regenerate numbering from the style definition
 
@@ -375,10 +376,10 @@ class DocxExporter:
 
         # Apply raw pPr if available (preserves numId="0" overrides, etc.)
         if raw_pPr:
-            self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl)
+            self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl, format_change)
         elif num_id is not None and num_ilvl is not None:
             # No raw pPr but we have numbering - add numPr element
-            self._add_numbering_to_paragraph(para, num_id, num_ilvl)
+            self._add_numbering_to_paragraph(para, num_id, num_ilvl, format_change)
 
         content = node.get("content", [])
 
@@ -396,6 +397,7 @@ class DocxExporter:
         raw_pPr = attrs.get("rawPPr")
         num_ilvl = attrs.get("numIlvl")  # Current indentation level from TipTap
         num_id = attrs.get("numId")  # Numbering definition ID
+        format_change = attrs.get("formatChange")  # Tracked formatting change
         content = node.get("content", [])
         # styleNumbering is stored as an attr, not as text content
         # Word will regenerate numbering from the style definition
@@ -409,9 +411,9 @@ class DocxExporter:
                     pass
             # Apply raw pPr if available
             if raw_pPr:
-                self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl)
+                self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl, format_change)
             elif num_id is not None and num_ilvl is not None:
-                self._add_numbering_to_paragraph(para, num_id, num_ilvl)
+                self._add_numbering_to_paragraph(para, num_id, num_ilvl, format_change)
             for child_node in content:
                 if child_node.get("type") == "text":
                     run = para.add_run(child_node.get("text", ""))
@@ -433,9 +435,9 @@ class DocxExporter:
 
             # Apply raw pPr if available (preserves numId="0" overrides, etc.)
             if raw_pPr:
-                self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl)
+                self._restore_raw_paragraph_properties(para, raw_pPr, num_ilvl, format_change)
             elif num_id is not None and num_ilvl is not None:
-                self._add_numbering_to_paragraph(para, num_id, num_ilvl)
+                self._add_numbering_to_paragraph(para, num_id, num_ilvl, format_change)
 
             for child_node in content:
                 if child_node.get("type") == "text":
@@ -823,7 +825,7 @@ class DocxExporter:
         p_elem.append(r)
 
     def _restore_raw_paragraph_properties(
-        self, para, raw_xml: str, num_ilvl: int = None
+        self, para, raw_xml: str, num_ilvl: int = None, format_change: dict = None
     ) -> None:
         """
         Restore raw pPr element from base64-encoded XML.
@@ -835,6 +837,7 @@ class DocxExporter:
         - pBdr (paragraph borders)
         - rPr (run properties default)
         - jc (justification)
+        - pPrChange (tracked formatting changes)
         - And any other direct formatting elements
 
         Args:
@@ -842,6 +845,7 @@ class DocxExporter:
             raw_xml: Base64-encoded pPr element
             num_ilvl: If provided, update the ilvl in numPr to this value
                      (for when user changed indentation level in TipTap)
+            format_change: If provided, add/update pPrChange element with tracked formatting info
         """
         if not raw_xml:
             return
@@ -864,6 +868,10 @@ class DocxExporter:
                     ilvl.set(qn("w:val"), str(num_ilvl))
                     # ilvl should be first child of numPr
                     numPr.insert(0, ilvl)
+
+        # Handle format change tracking (pPrChange)
+        if format_change:
+            self._add_or_update_pPr_change(new_pPr, format_change)
 
         # Get existing pPr (python-docx creates one when we set para.style)
         existing_pPr = p.find(qn("w:pPr"))
@@ -889,7 +897,9 @@ class DocxExporter:
             # No existing pPr, just add the new one
             p.insert(0, new_pPr)
 
-    def _add_numbering_to_paragraph(self, para, num_id: str, num_ilvl: int) -> None:
+    def _add_numbering_to_paragraph(
+        self, para, num_id: str, num_ilvl: int, format_change: dict = None
+    ) -> None:
         """
         Add numbering properties to a paragraph that doesn't have rawPPr.
 
@@ -900,6 +910,7 @@ class DocxExporter:
             para: The python-docx Paragraph object
             num_id: The Word numbering definition ID
             num_ilvl: The indentation level (0-8)
+            format_change: If provided, add pPrChange element with tracked formatting info
         """
         p = para._p
         pPr = p.get_or_add_pPr()
@@ -919,6 +930,78 @@ class DocxExporter:
 
         # Insert numPr in the correct position
         self._insert_pPr_element(pPr, numPr)
+
+        # Handle format change tracking (pPrChange)
+        if format_change:
+            self._add_or_update_pPr_change(pPr, format_change)
+
+    def _add_or_update_pPr_change(self, pPr, format_change: dict) -> None:
+        """
+        Add or update a pPrChange element to track formatting changes.
+
+        The pPrChange element stores the OLD formatting state, allowing Word
+        to show what the paragraph was changed FROM. The current formatting
+        is stored in the parent pPr.
+
+        Args:
+            pPr: The pPr element to add pPrChange to
+            format_change: Dict with id, author, date, oldStyle, oldNumIlvl
+        """
+        # Remove existing pPrChange if present (we'll recreate it)
+        existing_pPr_change = pPr.find(qn("w:pPrChange"))
+        if existing_pPr_change is not None:
+            pPr.remove(existing_pPr_change)
+
+        # Create new pPrChange element
+        pPr_change = OxmlElement("w:pPrChange")
+
+        # Set attributes
+        if format_change.get("id"):
+            pPr_change.set(qn("w:id"), str(format_change["id"]))
+        else:
+            pPr_change.set(qn("w:id"), self._next_revision_id())
+
+        if format_change.get("author"):
+            pPr_change.set(qn("w:author"), format_change["author"])
+        else:
+            pPr_change.set(qn("w:author"), "Unknown")
+
+        if format_change.get("date"):
+            pPr_change.set(qn("w:date"), format_change["date"])
+
+        # Create the old pPr element inside pPrChange
+        old_pPr = OxmlElement("w:pPr")
+
+        # Add old style if present
+        old_style = format_change.get("oldStyle")
+        if old_style:
+            old_pStyle = OxmlElement("w:pStyle")
+            old_pStyle.set(qn("w:val"), old_style)
+            old_pPr.append(old_pStyle)
+
+        # Add old numbering level if present
+        old_num_ilvl = format_change.get("oldNumIlvl")
+        if old_num_ilvl is not None:
+            # We need to create numPr with the old ilvl
+            # But we need the numId from the current pPr
+            current_numPr = pPr.find(qn("w:numPr"))
+            if current_numPr is not None:
+                current_numId = current_numPr.find(qn("w:numId"))
+                if current_numId is not None:
+                    old_numPr = OxmlElement("w:numPr")
+                    old_ilvl = OxmlElement("w:ilvl")
+                    old_ilvl.set(qn("w:val"), str(old_num_ilvl))
+                    old_numPr.append(old_ilvl)
+                    # Copy the numId
+                    old_numId = OxmlElement("w:numId")
+                    old_numId.set(qn("w:val"), current_numId.get(qn("w:val")))
+                    old_numPr.append(old_numId)
+                    old_pPr.append(old_numPr)
+
+        pPr_change.append(old_pPr)
+
+        # pPrChange must be the last element in pPr per OOXML schema
+        pPr.append(pPr_change)
 
     def _insert_pPr_element(self, pPr, element) -> None:
         """

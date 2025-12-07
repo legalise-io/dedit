@@ -777,6 +777,35 @@ del.selected-change,
     border-radius: 2px;
 }
 
+/* Tracked formatting changes (pPrChange) - paragraph-level changes */
+.tiptap .has-format-change {
+    position: relative;
+    border-left: 3px solid var(--author-color, #9333EA);
+    margin-left: -3px;
+}
+
+/* Show format change indicator as a tooltip on hover */
+.tiptap .has-format-change::after {
+    content: "Formatted: " attr(data-format-change-old-style) " → new style";
+    position: absolute;
+    left: 5em; /* Offset to avoid overlapping with numbering */
+    top: -22px;
+    font-size: 11px;
+    color: white;
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 100;
+}
+
+.tiptap .has-format-change:hover::after {
+    opacity: 1;
+}
+
 .tiptap .comment-highlight {
     background-color: #fff3cd;
     border-bottom: 2px solid #ffc107;

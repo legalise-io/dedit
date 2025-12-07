@@ -1,11 +1,27 @@
 import { Extension } from "@tiptap/core";
 import { Editor } from "@tiptap/core";
+import { getAuthorColor } from "../lib/utils/authorColors";
 
 export interface StyleNumberingOptions {
   /**
    * CSS class applied to paragraphs/headings with style numbering
    */
   numberingClass?: string;
+  /**
+   * CSS class applied to paragraphs/headings with tracked format changes
+   */
+  formatChangeClass?: string;
+}
+
+/**
+ * Tracked formatting change information (pPrChange)
+ */
+export interface FormatChange {
+  id: string;
+  author: string;
+  date: string | null;
+  oldStyle: string | null;
+  oldNumIlvl: number | null;
 }
 
 /**
@@ -68,6 +84,38 @@ function getStyleForLevel(
   if (!numIdStyles) return null;
   // JSON keys are strings, so convert numIlvl to string for lookup
   return numIdStyles[numIlvl] || numIdStyles[String(numIlvl)] || null;
+}
+
+/**
+ * Check if track changes mode is enabled and get the author.
+ * Returns null if track changes is disabled.
+ */
+function getTrackChangesInfo(
+  editor: Editor
+): { enabled: boolean; author: string } | null {
+  const storage = editor.storage.trackChangesMode;
+  if (!storage || !storage.enabled) return null;
+  return {
+    enabled: storage.enabled,
+    author: storage.author || "Unknown Author",
+  };
+}
+
+/**
+ * Create a format change object for tracking style/level changes.
+ */
+function createFormatChange(
+  author: string,
+  oldStyle: string | null,
+  oldNumIlvl: number | null
+): FormatChange {
+  return {
+    id: crypto.randomUUID(),
+    author,
+    date: new Date().toISOString(),
+    oldStyle,
+    oldNumIlvl,
+  };
 }
 
 /**
@@ -179,6 +227,7 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
   addOptions() {
     return {
       numberingClass: "has-style-numbering",
+      formatChangeClass: "has-format-change",
     };
   },
 
@@ -222,6 +271,31 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
               )
                 return {};
               return { "data-num-ilvl": String(attributes.numIlvl) };
+            },
+          },
+          formatChange: {
+            default: null,
+            parseHTML: (element: HTMLElement) => {
+              const data = element.getAttribute("data-format-change");
+              if (!data) return null;
+              try {
+                return JSON.parse(data);
+              } catch {
+                return null;
+              }
+            },
+            renderHTML: (attributes: Record<string, unknown>) => {
+              const fc = attributes.formatChange as FormatChange | null;
+              if (!fc) return {};
+              // Get author color for consistent styling with track changes
+              const authorColor = getAuthorColor(fc.author || "");
+              return {
+                "data-format-change": JSON.stringify(fc),
+                "data-format-change-author": fc.author,
+                "data-format-change-old-style": fc.oldStyle,
+                class: this.options.formatChangeClass,
+                style: `--author-color: ${authorColor.primary}; --author-color-light: ${authorColor.light};`,
+              };
             },
           },
         },
@@ -284,6 +358,7 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
         }
 
         const currentLevel = nodeAttrs.numIlvl || 0;
+        const currentStyle = nodeAttrs.styleName || null;
         const numId = nodeAttrs.numId;
         const newLevel = currentLevel + 1;
 
@@ -296,6 +371,16 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
         const updateAttrs: Record<string, unknown> = { numIlvl: newLevel };
         if (newStyleName) {
           updateAttrs.styleName = newStyleName;
+        }
+
+        // If track changes is enabled, create a format change to track this
+        const trackInfo = getTrackChangesInfo(editor);
+        if (trackInfo) {
+          updateAttrs.formatChange = createFormatChange(
+            trackInfo.author,
+            currentStyle,
+            currentLevel
+          );
         }
 
         editor.chain().updateAttributes(node.type.name, updateAttrs).run();
@@ -322,6 +407,7 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
         }
 
         const currentLevel = nodeAttrs.numIlvl || 0;
+        const currentStyle = nodeAttrs.styleName || null;
         const numId = nodeAttrs.numId;
 
         // Can't decrease below level 0
@@ -340,6 +426,16 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
         const updateAttrs: Record<string, unknown> = { numIlvl: newLevel };
         if (newStyleName) {
           updateAttrs.styleName = newStyleName;
+        }
+
+        // If track changes is enabled, create a format change to track this
+        const trackInfo = getTrackChangesInfo(editor);
+        if (trackInfo) {
+          updateAttrs.formatChange = createFormatChange(
+            trackInfo.author,
+            currentStyle,
+            currentLevel
+          );
         }
 
         editor.chain().updateAttributes(node.type.name, updateAttrs).run();

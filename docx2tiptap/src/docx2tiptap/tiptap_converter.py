@@ -177,6 +177,18 @@ class TipTapConverter:
             attrs["numId"] = para.num_id  # Word numId reference
             attrs["numIlvl"] = para.num_ilvl  # Indentation level (0-8)
 
+        # Handle tracked formatting change (pPrChange)
+        # This tracks when paragraph formatting (like style/indentation) was changed
+        if para.format_change:
+            fc = para.format_change
+            attrs["formatChange"] = {
+                "id": fc.get("id"),
+                "author": fc.get("author"),
+                "date": fc.get("date"),
+                "oldStyle": fc.get("old_style"),
+                "oldNumIlvl": fc.get("old_num_ilvl"),
+            }
+
         # Determine if this is a heading
         if para.level > 0:
             attrs["level"] = min(para.level, 6)  # TipTap supports h1-h6

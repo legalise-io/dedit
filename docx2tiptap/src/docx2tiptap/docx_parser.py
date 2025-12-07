@@ -25,6 +25,7 @@ from .models import (
     CellBorders,
     CellStyle,
     Paragraph,
+    ParagraphFormatChange,
     Table,
     TableCell,
     TableRow,
@@ -110,6 +111,7 @@ def parse_paragraph(
     raw_pPr = None
     num_id = None
     ilvl = None
+    format_change = None
 
     # Check for direct paragraph formatting (pPr)
     if para._element.pPr is not None:
@@ -123,6 +125,11 @@ def parse_paragraph(
             if ilvl_elem is not None and num_id_elem is not None:
                 ilvl = int(ilvl_elem.get(qn("w:val")))
                 num_id = num_id_elem.get(qn("w:val"))
+
+        # Check for pPrChange (tracked formatting change)
+        pPr_change = pPr.find(qn("w:pPrChange"))
+        if pPr_change is not None:
+            format_change = _parse_pPr_change(pPr_change)
 
         # Preserve pPr if there's ANY direct formatting beyond just pStyle
         # This includes: numPr, ind (indent), spacing, pBdr (borders), rPr, etc.
@@ -157,6 +164,55 @@ def parse_paragraph(
         raw_pPr=raw_pPr,
         num_id=num_id if num_id and num_id != "0" else None,
         num_ilvl=ilvl if ilvl is not None else 0,
+        format_change=format_change,
+    )
+
+
+def _parse_pPr_change(pPr_change) -> Optional[ParagraphFormatChange]:
+    """Parse a pPrChange element into a ParagraphFormatChange.
+
+    The pPrChange element tracks formatting changes to a paragraph,
+    storing the old formatting inside and the new formatting outside.
+
+    Example XML:
+        <w:pPrChange w:id="27" w:author="John" w:date="2025-12-07T15:19:00Z">
+            <w:pPr>
+                <w:pStyle w:val="SH3Legal"/>
+            </w:pPr>
+        </w:pPrChange>
+    """
+    if pPr_change is None:
+        return None
+
+    # Extract attributes from pPrChange element
+    change_id = pPr_change.get(qn("w:id"))
+    author = pPr_change.get(qn("w:author"))
+    date = pPr_change.get(qn("w:date"))
+
+    # Get the old formatting from the nested pPr element
+    old_pPr = pPr_change.find(qn("w:pPr"))
+    old_style = None
+    old_num_ilvl = None
+
+    if old_pPr is not None:
+        # Extract old style name
+        old_pStyle = old_pPr.find(qn("w:pStyle"))
+        if old_pStyle is not None:
+            old_style = old_pStyle.get(qn("w:val"))
+
+        # Extract old numbering level if present
+        old_numPr = old_pPr.find(qn("w:numPr"))
+        if old_numPr is not None:
+            old_ilvl_elem = old_numPr.find(qn("w:ilvl"))
+            if old_ilvl_elem is not None:
+                old_num_ilvl = int(old_ilvl_elem.get(qn("w:val")))
+
+    return ParagraphFormatChange(
+        id=change_id,
+        author=author,
+        date=date,
+        old_style=old_style,
+        old_num_ilvl=old_num_ilvl,
     )
 
 

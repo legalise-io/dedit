@@ -24,6 +24,16 @@ class RevisionInfo(TypedDict, total=False):
     date: Optional[str]
 
 
+class ParagraphFormatChange(TypedDict, total=False):
+    """Tracked formatting change for a paragraph (pPrChange)."""
+
+    id: str
+    author: str
+    date: Optional[str]
+    old_style: Optional[str]  # The original style before the change
+    old_num_ilvl: Optional[int]  # The original numbering level
+
+
 class MarkAttrs(TypedDict, total=False):
     """Attributes for a TipTap mark."""
 
@@ -111,6 +121,8 @@ class Paragraph:
     # Numbering definition info (for TipTap to create new numbered items)
     num_id: Optional[str] = None  # Word numId reference
     num_ilvl: int = 0  # Numbering indentation level (0-8)
+    # Tracked formatting change (pPrChange) - when track changes captures style changes
+    format_change: Optional["ParagraphFormatChange"] = None
 
 
 @dataclass
