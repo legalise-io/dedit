@@ -60,14 +60,39 @@ export function useChangeNavigation({
       const change = changes[currentChangeIndex];
 
       // Find the element by its data attribute
-      const selector =
-        change.type === "insertion"
-          ? `ins[data-insertion-id="${change.id}"]`
-          : `del[data-deletion-id="${change.id}"]`;
+      let selector: string;
+      if (change.type === "insertion") {
+        selector = `ins[data-insertion-id="${change.id}"]`;
+      } else if (change.type === "deletion") {
+        selector = `del[data-deletion-id="${change.id}"]`;
+      } else if (change.type === "formatChange") {
+        // Format changes are on paragraph/heading elements with data-format-change attribute
+        selector = `.has-format-change`;
+      } else {
+        return;
+      }
 
-      const element = editorDom.querySelector(selector);
-      if (element) {
-        element.classList.add("selected-change");
+      // For format changes, we need to find the one with matching ID
+      if (change.type === "formatChange") {
+        const elements = editorDom.querySelectorAll(selector);
+        elements.forEach((el) => {
+          try {
+            const fcData = el.getAttribute("data-format-change");
+            if (fcData) {
+              const fc = JSON.parse(fcData);
+              if (fc.id === change.id) {
+                el.classList.add("selected-change");
+              }
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        });
+      } else {
+        const element = editorDom.querySelector(selector);
+        if (element) {
+          element.classList.add("selected-change");
+        }
       }
     }
   }, [editor, currentChangeIndex, changes, containerRef]);
@@ -148,6 +173,42 @@ export function useChangeNavigation({
     const doc = editor.state.doc;
 
     doc.nodesBetween(from, to, (node, pos) => {
+      // Check for format changes on paragraph/heading nodes
+      const fc = node.attrs.formatChange;
+      if (fc && fc.id) {
+        const nodeFrom = pos;
+        const nodeTo = pos + node.nodeSize;
+        // Check if this node overlaps with selection
+        if (nodeFrom < to && nodeTo > from) {
+          const existing = changesInSelection.find((c) => c.id === fc.id);
+          if (!existing) {
+            // Get text preview from the node
+            let text = "";
+            node.descendants((child) => {
+              if (child.isText && text.length < 50) {
+                text += child.text || "";
+              }
+            });
+            if (text.length > 50) text = text.slice(0, 47) + "...";
+
+            changesInSelection.push({
+              id: fc.id,
+              type: "formatChange",
+              author: fc.author,
+              date: fc.date,
+              text: text || "[paragraph]",
+              from: nodeFrom,
+              to: nodeTo,
+              oldStyle: fc.oldStyle,
+              oldNumIlvl: fc.oldNumIlvl,
+              newStyle: node.attrs.styleName,
+              newNumIlvl: node.attrs.numIlvl,
+            });
+          }
+        }
+      }
+
+      // Check for insertion/deletion marks on text nodes
       if (node.isText && node.marks) {
         node.marks.forEach((mark) => {
           if (

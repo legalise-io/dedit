@@ -221,6 +221,21 @@ function recalculateNumbering(editor: Editor, targetNumId: string): void {
  * - numId: The Word numbering definition ID
  * - numIlvl: The indentation level (0-8)
  */
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    styleNumbering: {
+      /**
+       * Accept a format change - keeps the current formatting and removes the tracked change marker
+       */
+      acceptFormatChange: (changeId: string) => ReturnType;
+      /**
+       * Reject a format change - reverts to the old formatting and removes the tracked change marker
+       */
+      rejectFormatChange: (changeId: string) => ReturnType;
+    };
+  }
+}
+
 export const StyleNumbering = Extension.create<StyleNumberingOptions>({
   name: "styleNumbering",
 
@@ -228,6 +243,82 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
     return {
       numberingClass: "has-style-numbering",
       formatChangeClass: "has-format-change",
+    };
+  },
+
+  addCommands() {
+    return {
+      acceptFormatChange:
+        (changeId: string) =>
+        ({ tr, state, dispatch }) => {
+          const { doc } = state;
+          let found = false;
+
+          doc.descendants((node, pos) => {
+            if (found) return false;
+            const fc = node.attrs.formatChange as FormatChange | null;
+            if (fc && fc.id === changeId) {
+              // Accept = keep current formatting, just remove the formatChange marker
+              if (dispatch) {
+                tr.setNodeMarkup(pos, undefined, {
+                  ...node.attrs,
+                  formatChange: null,
+                });
+              }
+              found = true;
+              return false;
+            }
+            return true;
+          });
+
+          return found;
+        },
+
+      rejectFormatChange:
+        (changeId: string) =>
+        ({ tr, state, dispatch, editor }) => {
+          const { doc } = state;
+          let found = false;
+
+          doc.descendants((node, pos) => {
+            if (found) return false;
+            const fc = node.attrs.formatChange as FormatChange | null;
+            if (fc && fc.id === changeId) {
+              // Reject = revert to old formatting
+              const newAttrs: Record<string, unknown> = {
+                ...node.attrs,
+                formatChange: null,
+              };
+
+              // Restore old numIlvl if it was tracked
+              if (fc.oldNumIlvl !== null && fc.oldNumIlvl !== undefined) {
+                newAttrs.numIlvl = fc.oldNumIlvl;
+              }
+
+              // Restore old style name if it was tracked
+              if (fc.oldStyle) {
+                newAttrs.styleName = fc.oldStyle;
+              }
+
+              if (dispatch) {
+                tr.setNodeMarkup(pos, undefined, newAttrs);
+
+                // Recalculate numbering after the transaction is applied
+                const numId = node.attrs.numId;
+                if (numId) {
+                  setTimeout(() => {
+                    recalculateNumbering(editor, numId);
+                  }, 0);
+                }
+              }
+              found = true;
+              return false;
+            }
+            return true;
+          });
+
+          return found;
+        },
     };
   },
 

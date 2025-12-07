@@ -38,12 +38,20 @@ export interface CommentData {
  */
 export interface TrackedChange {
   id: string;
-  type: "insertion" | "deletion";
+  type: "insertion" | "deletion" | "formatChange";
   author: string | null;
   date: string | null;
   text: string;
   from: number;
   to: number;
+  /** For formatChange: the old style name before the change */
+  oldStyle?: string | null;
+  /** For formatChange: the old numbering level before the change */
+  oldNumIlvl?: number | null;
+  /** For formatChange: the current style name */
+  newStyle?: string | null;
+  /** For formatChange: the current numbering level */
+  newNumIlvl?: number | null;
 }
 
 /**
