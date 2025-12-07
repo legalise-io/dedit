@@ -101,10 +101,11 @@ export function applyParagraphEdit(
   const diff = computeDiff(para.text, newText);
   console.log(`  Diff results:`, diff.filter((d) => d.type !== "keep"));
 
-  // Map diff changes to actual document positions
-  const mappedChanges = mapDiffChangesToDocPositions(diff, para.positionMap);
+  // Don't pre-map all positions - we'll map each one before applying
+  // because the document changes with each operation
+  const diffChanges = diff.filter(d => d.type === "delete" || d.type === "insert");
 
-  console.log(`  Mapped changes: ${mappedChanges.length}`);
+  console.log(`  Diff changes (non-keep): ${diffChanges.length}`);
 
   // Group consecutive delete+insert pairs as single word changes
   const wordChanges: WordChange[] = [];
@@ -151,41 +152,38 @@ export function applyParagraphEdit(
       if (id) existingIds.add(id);
     });
 
-  // Combine adjacent delete+insert pairs into replacement operations,
-  // then apply in reverse order (end to start) so positions remain valid.
-
-  interface CombinedChange {
-    docStart: number;
-    docEnd: number;
+  // Combine adjacent delete+insert pairs from the diff
+  interface CombinedDiffChange {
+    cleanStart: number;
+    cleanEnd: number;
     deleteText: string;
     insertText: string;
   }
 
-  // First, combine adjacent delete+insert pairs
-  const combined: CombinedChange[] = [];
-  const used = new Set<number>();
-
-  // Sort by cleanStart to find adjacent pairs
-  const byCleanStart = [...mappedChanges].sort(
-    (a, b) => a.cleanStart - b.cleanStart,
+  // Sort diff changes by cleanStart to find adjacent pairs
+  const sortedDiffChanges = [...diffChanges].sort(
+    (a, b) => a.oldStart - b.oldStart,
   );
 
-  for (let i = 0; i < byCleanStart.length; i++) {
+  const combined: CombinedDiffChange[] = [];
+  const used = new Set<number>();
+
+  for (let i = 0; i < sortedDiffChanges.length; i++) {
     if (used.has(i)) continue;
 
-    const current = byCleanStart[i];
-    const next = byCleanStart[i + 1];
+    const current = sortedDiffChanges[i];
+    const next = sortedDiffChanges[i + 1];
 
     if (
       current.type === "delete" &&
       next &&
       next.type === "insert" &&
-      next.cleanStart === current.cleanEnd
+      next.oldStart === current.oldEnd
     ) {
       // This is a delete+insert pair (replacement)
       combined.push({
-        docStart: current.docStart,
-        docEnd: current.docEnd,
+        cleanStart: current.oldStart,
+        cleanEnd: current.oldEnd,
         deleteText: current.text,
         insertText: next.text,
       });
@@ -193,16 +191,16 @@ export function applyParagraphEdit(
       used.add(i + 1);
     } else if (current.type === "delete") {
       combined.push({
-        docStart: current.docStart,
-        docEnd: current.docEnd,
+        cleanStart: current.oldStart,
+        cleanEnd: current.oldEnd,
         deleteText: current.text,
         insertText: "",
       });
       used.add(i);
     } else if (current.type === "insert") {
       combined.push({
-        docStart: current.docStart,
-        docEnd: current.docStart,
+        cleanStart: current.oldStart,
+        cleanEnd: current.oldStart,
         deleteText: "",
         insertText: current.text,
       });
@@ -210,59 +208,50 @@ export function applyParagraphEdit(
     }
   }
 
-  // Sort combined changes by docStart ASCENDING (start to end)
-  // We need to apply from start to end and track cumulative position shifts
-  // because with track changes, deletions don't remove text - they add marked text
-  combined.sort((a, b) => a.docStart - b.docStart);
+  console.log(`  Combined into ${combined.length} operations`);
 
-  console.log(`  Combined into ${combined.length} operations (applying start to end)`);
+  // Apply changes from END to START
+  // This way, earlier positions aren't affected by later changes
+  // We use the original position map for all calculations
+  combined.sort((a, b) => b.cleanStart - a.cleanStart);
 
-  // Track cumulative position shift as we apply changes
-  // With track changes:
-  // - A "deletion" actually KEEPS the text (with deletion mark), so no shift
-  // - An "insertion" ADDS new text (with insertion mark), shifting by insert length
-  // - A "replacement" adds BOTH old text (marked deleted) AND new text (marked inserted)
-  //   so it shifts by insertText.length (the deleted text stays, insert adds)
-  let positionShift = 0;
+  console.log(`  Applying ${combined.length} operations from end to start`);
+
+  // Use the original position map for all operations
+  // Since we're going end to start, positions before our current operation
+  // haven't been affected yet
+  const originalPositionMap = para.positionMap;
 
   for (const change of combined) {
-    const adjustedStart = change.docStart + positionShift;
-    const adjustedEnd = change.docEnd + positionShift;
+    // Map clean positions to document positions using ORIGINAL position map
+    const docStart = cleanPosToDocPos(change.cleanStart, originalPositionMap);
+    const docEnd = cleanPosToDocPos(change.cleanEnd, originalPositionMap);
 
     console.log(
-      `  Applying at adjusted[${adjustedStart}-${adjustedEnd}] (shift=${positionShift}): delete="${change.deleteText.substring(0, 20)}..." insert="${change.insertText.substring(0, 20)}..."`,
+      `  Applying: clean[${change.cleanStart}-${change.cleanEnd}] -> doc[${docStart}-${docEnd}] delete="${change.deleteText.substring(0, 20)}..." insert="${change.insertText.substring(0, 20)}..."`,
     );
 
     if (change.deleteText && change.insertText) {
       // Replacement: select range and replace with new text
-      // Track changes will KEEP deleted text (with mark) and ADD inserted text
-      // Net effect: document grows by insertText.length
       ed.chain()
         .focus()
-        .setTextSelection({ from: adjustedStart, to: adjustedEnd })
+        .setTextSelection({ from: docStart, to: docEnd })
         .insertContent(change.insertText)
         .run();
-      positionShift += change.insertText.length;
     } else if (change.deleteText) {
       // Pure deletion: select and delete
-      // Track changes will KEEP the text with deletion mark
-      // Net effect: no change in document length
       ed.chain()
         .focus()
-        .setTextSelection({ from: adjustedStart, to: adjustedEnd })
+        .setTextSelection({ from: docStart, to: docEnd })
         .deleteSelection()
         .run();
-      // No position shift - deleted text stays (just marked)
     } else if (change.insertText) {
       // Pure insertion: position cursor and insert
-      // Track changes will ADD the text with insertion mark
-      // Net effect: document grows by insertText.length
       ed.chain()
         .focus()
-        .setTextSelection(adjustedStart)
+        .setTextSelection(docStart)
         .insertContent(change.insertText)
         .run();
-      positionShift += change.insertText.length;
     }
   }
 

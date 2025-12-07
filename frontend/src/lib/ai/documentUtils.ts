@@ -214,6 +214,45 @@ export function getPositionInfo(
 }
 
 /**
+ * Extract "clean" text from a selection range, excluding deleted text.
+ * This walks through text nodes in the range and skips any with deletion marks.
+ * Inserted text is included as it represents the current state.
+ */
+export function getCleanTextInRange(
+  editor: Editor,
+  from: number,
+  to: number,
+): string {
+  let text = "";
+  const doc = editor.state.doc;
+
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (node.isText && node.text) {
+      // Check if this text has a deletion mark
+      const hasDeletion = node.marks.some(
+        (mark) => mark.type.name === "deletion",
+      );
+      if (!hasDeletion) {
+        // Calculate the overlap between node and selection
+        const nodeStart = pos;
+        const nodeEnd = pos + node.text.length;
+        const overlapStart = Math.max(nodeStart, from);
+        const overlapEnd = Math.min(nodeEnd, to);
+
+        if (overlapStart < overlapEnd) {
+          const textStart = overlapStart - nodeStart;
+          const textEnd = overlapEnd - nodeStart;
+          text += node.text.slice(textStart, textEnd);
+        }
+      }
+    }
+    return true;
+  });
+
+  return text;
+}
+
+/**
  * Extract "clean" text from a paragraph node, excluding deleted text.
  * This walks through the node's children and skips any text with deletion marks.
  * Inserted text is included as it represents the current state.

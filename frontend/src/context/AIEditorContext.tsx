@@ -27,6 +27,7 @@ import type { ContextItem } from "../lib/types";
 import {
   buildIndexedDocument,
   getPendingTrackChangesInScope,
+  getCleanTextInRange,
 } from "../lib/ai/documentUtils";
 import { groupTrackChanges } from "../lib/ai/diffUtils";
 import { applyEditsAsTrackChanges } from "../lib/ai/applyEdits";
@@ -305,7 +306,8 @@ export function AIEditorProvider({
 
       // Get current selection context
       const { from, to } = ed.state.selection;
-      const selectedText = ed.state.doc.textBetween(from, to, " ");
+      // Use clean text (excluding deletions) so AI doesn't see deleted content
+      const selectedText = getCleanTextInRange(ed, from, to);
       const hasSelection = from !== to && selectedText.length > 0;
 
       // Determine scope for track changes
