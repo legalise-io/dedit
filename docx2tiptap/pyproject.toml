@@ -10,7 +10,7 @@ readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"
 authors = [
-    { name = "Jamie Lawrence" }
+    { name = "Legalise.io" }
 ]
 keywords = ["docx", "tiptap", "prosemirror", "word", "document", "parser"]
 classifiers = [
@@ -27,9 +27,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jvsteiner/dedit-react-editor/tree/main/docx2tiptap"
-Repository = "https://github.com/jvsteiner/dedit-react-editor"
-Issues = "https://github.com/jvsteiner/dedit-react-editor/issues"
+Homepage = "https://github.com/legalise-io/dedit/tree/main/docx2tiptap"
+Repository = "https://github.com/legalise-io/dedit"
+Issues = "https://github.com/legalise-io/dedit/issues"
 
 [project.optional-dependencies]
 dev = [
