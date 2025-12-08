@@ -302,41 +302,24 @@ function addRestoreDeletedChanges(
 }
 
 /**
- * Add an insertion change if there's inserted text without an existing insertion mark.
+ * Add an insertion change for inserted text.
+ * Always add an insertion change to ensure the correct author is attributed,
+ * even if the text already has an insertion mark from another author.
  */
 function addInsertionChange(
   insertedText: string,
   mappedFrom: number,
-  newState: EditorState,
+  _newState: EditorState,
   pendingChanges: PendingChange[],
 ): void {
   if (!insertedText || insertedText.length === 0) return;
 
-  // Check if this text already has an insertion mark
-  let hasInsertionMark = false;
-  try {
-    newState.doc.nodesBetween(
-      mappedFrom,
-      Math.min(mappedFrom + insertedText.length, newState.doc.content.size),
-      (node) => {
-        if (
-          node.isText &&
-          node.marks.some((m) => m.type.name === "insertion")
-        ) {
-          hasInsertionMark = true;
-        }
-      },
-    );
-  } catch {
-    // Position issues, mark anyway
-  }
-
-  if (!hasInsertionMark) {
-    pendingChanges.push({
-      type: "insertion",
-      from: mappedFrom,
-      to: mappedFrom + insertedText.length,
-      text: insertedText,
-    });
-  }
+  // Always add insertion change - applyInsertion will handle removing
+  // any existing insertion marks and adding the new one with correct author
+  pendingChanges.push({
+    type: "insertion",
+    from: mappedFrom,
+    to: mappedFrom + insertedText.length,
+    text: insertedText,
+  });
 }

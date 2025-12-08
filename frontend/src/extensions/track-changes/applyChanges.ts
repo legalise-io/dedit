@@ -124,6 +124,14 @@ function applyInsertion(
     tr = tr.removeMark(mappedFrom, mappedTo, deletionMarkType);
   }
 
-  // Then add the insertion mark
+  // Also remove any existing insertion mark from this range
+  // This handles the case where we're replacing another author's insertion
+  // and need to attribute the new text to the current author
+  const insertionMarkType = newState.schema.marks.insertion;
+  if (insertionMarkType) {
+    tr = tr.removeMark(mappedFrom, mappedTo, insertionMarkType);
+  }
+
+  // Then add the insertion mark with the current author
   return tr.addMark(mappedFrom, mappedTo, insertionMark);
 }
