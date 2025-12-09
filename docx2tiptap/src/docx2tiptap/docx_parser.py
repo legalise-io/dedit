@@ -70,6 +70,18 @@ def parse_paragraph(
                     revision=seg.get("revision"),
                 )
             )
+        elif seg.get("tab"):
+            # Handle tab segments (used for form fields with underlines)
+            runs.append(
+                TextRun(
+                    text="\t",  # Represent as tab character
+                    is_tab=True,
+                    bold=seg.get("bold", False),
+                    italic=seg.get("italic", False),
+                    revision=seg.get("revision"),
+                    raw_rPr=seg.get("raw_rPr"),
+                )
+            )
         elif seg.get("text"):
             # Try to find matching comment info
             comment_ids = comment_map.get(seg["text"], [])

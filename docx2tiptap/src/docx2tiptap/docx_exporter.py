@@ -388,6 +388,8 @@ class DocxExporter:
                 self._add_text_with_marks(para, child_node)
             elif child_node.get("type") == "hardBreak":
                 self._add_break(para, child_node)
+            elif child_node.get("type") == "tab":
+                self._add_tab(para, child_node)
 
     def _process_heading(self, node: dict, table_cell=None) -> None:
         """Process a heading node."""
@@ -421,6 +423,8 @@ class DocxExporter:
                     self._apply_basic_marks(run, child_node.get("marks", []))
                 elif child_node.get("type") == "hardBreak":
                     self._add_break(para, child_node)
+                elif child_node.get("type") == "tab":
+                    self._add_tab(para, child_node)
         else:
             # If we have a custom style name, use it; otherwise use standard heading
             if style_name:
@@ -444,6 +448,8 @@ class DocxExporter:
                     self._add_text_with_marks(para, child_node)
                 elif child_node.get("type") == "hardBreak":
                     self._add_break(para, child_node)
+                elif child_node.get("type") == "tab":
+                    self._add_tab(para, child_node)
 
     def _process_table(self, node: dict, parent_cell=None) -> None:
         """Process a table node with support for merged cells (colspan/rowspan) and styling.
@@ -602,6 +608,8 @@ class DocxExporter:
                             self._add_text_with_marks(cell.paragraphs[0], child_node)
                         elif child_node.get("type") == "hardBreak":
                             self._add_break(cell.paragraphs[0], child_node)
+                        elif child_node.get("type") == "tab":
+                            self._add_tab(cell.paragraphs[0], child_node)
                 elif node_type == "heading":
                     # Apply style if specified
                     style_name = attrs.get("styleName")
@@ -620,6 +628,8 @@ class DocxExporter:
                             self._apply_basic_marks(run, child_node.get("marks", []))
                         elif child_node.get("type") == "hardBreak":
                             self._add_break(cell.paragraphs[0], child_node)
+                        elif child_node.get("type") == "tab":
+                            self._add_tab(cell.paragraphs[0], child_node)
             else:
                 self._process_node(content_node, table_cell=cell)
 
@@ -831,6 +841,39 @@ class DocxExporter:
         # else: line break (no type attribute needed)
 
         r.append(br)
+        p_elem.append(r)
+
+    def _add_tab(self, para, node: dict) -> None:
+        """
+        Add a tab character to a paragraph, preserving styling (like dotted underlines).
+
+        Args:
+            para: The python-docx Paragraph object
+            node: The TipTap tab node with optional marks
+        """
+        p_elem = para._p
+        marks = node.get("marks", [])
+
+        # Create run element
+        r = OxmlElement("w:r")
+
+        # Check for raw style mark (contains w:rPr with underline, etc.)
+        raw_style_mark = None
+        for mark in marks:
+            if mark.get("type") == "rawStyle":
+                raw_style_mark = mark.get("attrs", {})
+                break
+
+        # Restore rPr if available (preserves dotted underlines, etc.)
+        if raw_style_mark and raw_style_mark.get("rPr"):
+            rPr = base64_to_element(raw_style_mark["rPr"])
+            if rPr is not None:
+                r.append(rPr)
+
+        # Create tab element
+        tab = OxmlElement("w:tab")
+        r.append(tab)
+
         p_elem.append(r)
 
     def _restore_raw_paragraph_properties(

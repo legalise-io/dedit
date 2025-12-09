@@ -2412,6 +2412,13 @@ del.selected-change,
     border-radius: 2px;
 }
 
+/* Tab character - renders as a fixed-width space */
+.tiptap .word-tab {
+    display: inline-block;
+    min-width: 2em;
+    white-space: pre;
+}
+
 /* Page break indicator */
 .tiptap .page-break {
     display: block;

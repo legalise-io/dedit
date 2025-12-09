@@ -148,6 +148,18 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                             "revision": current_revision,
                         }
                     )
+                elif child.tag == qn("w:tab"):
+                    # Handle tab characters (used for form fields with underlines)
+                    # Preserve the raw_rPr so styling (like dotted underlines) is maintained
+                    segments.append(
+                        {
+                            "tab": True,
+                            "revision": current_revision,
+                            "bold": is_bold,
+                            "italic": is_italic,
+                            "raw_rPr": raw_rPr,
+                        }
+                    )
             return
 
         # Recurse into other elements
@@ -178,9 +190,9 @@ def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
     current = segments[0].copy()
 
     for seg in segments[1:]:
-        # Break segments should never be merged
-        if seg.get("break") or current.get("break"):
-            if current.get("text") or current.get("break"):
+        # Break and tab segments should never be merged
+        if seg.get("break") or current.get("break") or seg.get("tab") or current.get("tab"):
+            if current.get("text") or current.get("break") or current.get("tab"):
                 merged.append(current)
             current = seg.copy()
             continue
@@ -206,7 +218,7 @@ def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
                 merged.append(current)
             current = seg.copy()
 
-    if current.get("text") or current.get("break"):
+    if current.get("text") or current.get("break") or current.get("tab"):
         merged.append(current)
 
     return merged

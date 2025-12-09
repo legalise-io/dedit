@@ -66,6 +66,8 @@ class TipTapConverter:
 
         # Also store the style-numbering map for export
         if self._style_numbering_map:
+            if raw_styles is None:
+                raw_styles = {}
             raw_styles["__style_numbering_map__"] = self._style_numbering_map
 
         if raw_styles:
@@ -89,6 +91,14 @@ class TipTapConverter:
             else:
                 # Regular line break or text wrapping
                 return {"type": "hardBreak"}
+
+        # Handle tab runs - create a special tab node to preserve styling
+        if run.is_tab:
+            node = {"type": "tab"}
+            marks = self._build_marks(run)
+            if marks:
+                node["marks"] = marks
+            return node
 
         # Skip empty text runs
         if not run.text:

@@ -23,6 +23,7 @@ import { TrackChangesMode } from "../../extensions/TrackChangesMode";
 import { SearchAndReplace } from "../../extensions/SearchAndReplace";
 import { RawStylesStorage } from "../../extensions/RawStylesStorage";
 import { StyleNumbering } from "../../extensions/StyleNumbering";
+import { Tab } from "../../extensions/Tab";
 
 import type { TipTapDocument, UseDocumentEditorOptions } from "../types";
 
@@ -88,6 +89,7 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       Bold,
       Italic,
       HardBreakWithType,
+      Tab,
       Section,
       TableWithId.configure({
         resizable: tableResizable,

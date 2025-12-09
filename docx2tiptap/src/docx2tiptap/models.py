@@ -106,6 +106,8 @@ class TextRun:
     # Break information (page break, line break, etc.)
     is_break: bool = False
     break_type: Optional[str] = None  # "page", "column", "textWrapping", or None (line break)
+    # Tab character (used for form fields with underlines)
+    is_tab: bool = False
 
 
 @dataclass
