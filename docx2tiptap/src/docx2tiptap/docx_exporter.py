@@ -339,7 +339,7 @@ class DocxExporter:
         elif node_type == "heading":
             self._process_heading(node, table_cell)
         elif node_type == "table":
-            self._process_table(node)
+            self._process_table(node, table_cell)
         elif node_type == "section":
             self._process_section(node)
 
@@ -445,8 +445,13 @@ class DocxExporter:
                 elif child_node.get("type") == "hardBreak":
                     self._add_break(para, child_node)
 
-    def _process_table(self, node: dict) -> None:
-        """Process a table node with support for merged cells (colspan/rowspan) and styling."""
+    def _process_table(self, node: dict, parent_cell=None) -> None:
+        """Process a table node with support for merged cells (colspan/rowspan) and styling.
+
+        Args:
+            node: The TipTap table node
+            parent_cell: Optional parent cell for nested tables
+        """
         rows_data = node.get("content", [])
         if not rows_data:
             return
@@ -464,7 +469,11 @@ class DocxExporter:
         if num_rows == 0 or num_cols == 0:
             return
 
-        table = self._doc.add_table(rows=num_rows, cols=num_cols)
+        # Create table in the appropriate parent (document root or cell)
+        if parent_cell is not None:
+            table = parent_cell.add_table(rows=num_rows, cols=num_cols)
+        else:
+            table = self._doc.add_table(rows=num_rows, cols=num_cols)
 
         # Get table-level attributes
         table_attrs = node.get("attrs", {})

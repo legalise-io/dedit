@@ -273,16 +273,9 @@ class TipTapConverter:
             if isinstance(elem, Paragraph):
                 result.append(self._paragraph_to_node(elem))
             elif isinstance(elem, Table):
-                # Nested tables - TipTap tables don't typically nest,
-                # so we flatten to paragraphs with indication
-                result.append(
-                    {
-                        "type": "paragraph",
-                        "content": [
-                            {"type": "text", "text": "[Nested table content]"}
-                        ],
-                    }
-                )
+                # Nested tables - recursively convert to TipTap table nodes
+                # TipTap's tableCell schema allows 'block+' content which includes tables
+                result.append(self._table_to_node(elem))
         return result
 
     def _section_to_node(self, section: Section) -> dict:
