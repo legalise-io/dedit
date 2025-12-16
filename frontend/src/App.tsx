@@ -702,6 +702,23 @@ function AppContent() {
                       className="json-content"
                       style={{ borderTop: "1px solid #eee" }}
                     >
+                      <div style={{ display: "flex", justifyContent: "flex-end", padding: "4px 8px", borderBottom: "1px solid #eee" }}>
+                        <button
+                          onClick={() => {
+                            const json = editorJson
+                              ? JSON.stringify(editorJson, null, 2)
+                              : JSON.stringify({ type: "doc", content: [] }, null, 2);
+                            navigator.clipboard.writeText(json);
+                          }}
+                          style={{
+                            fontSize: "0.7rem",
+                            padding: "2px 8px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Copy JSON
+                        </button>
+                      </div>
                       <pre
                         style={{
                           fontSize: "0.7rem",
