@@ -1,3 +1,4 @@
+import { Plugin } from "@tiptap/pm/state";
 import Paragraph from "@tiptap/extension-paragraph";
 import { v4 as uuidv4 } from "uuid";
 
@@ -72,6 +73,7 @@ export const ParagraphWithId = Paragraph.extend<ParagraphWithIdOptions>({
     const baseAttributes: Record<string, unknown> = {
       ...this.parent?.(),
       id: {
+        keepOnSplit: false,
         default: null,
         parseHTML: (element: HTMLElement) => {
           // Get existing ID or generate new one
@@ -170,63 +172,28 @@ export const ParagraphWithId = Paragraph.extend<ParagraphWithIdOptions>({
     this.storage.isAssigningIds = false;
   },
 
-  // Hook to assign IDs when content is set after editor creation (e.g., setContent)
-  onUpdate() {
-    // Prevent recursive/concurrent calls
-    if (this.storage.isAssigningIds) {
-      return;
-    }
-
-    // Check if any paragraphs are missing IDs
-    let hasMissingIds = false;
-    let totalParagraphs = 0;
-    this.editor.state.doc.descendants((node) => {
-      if (node.type.name === "paragraph") {
-        totalParagraphs++;
-        if (!node.attrs.id) {
-          hasMissingIds = true;
-        }
-      }
-    });
-
-    console.log(
-      `[ParagraphWithId] onUpdate: ${totalParagraphs} paragraphs, hasMissingIds=${hasMissingIds}`,
-    );
-
-    if (!hasMissingIds) {
-      return;
-    }
-
-    // Defer to next tick to avoid dispatching during a dispatch
-    this.storage.isAssigningIds = true;
-    const editor = this.editor;
-    const storage = this.storage;
-
-    setTimeout(() => {
-      const { tr } = editor.state;
-      let modified = false;
-      let count = 0;
-
-      editor.state.doc.descendants((node, pos) => {
-        if (node.type.name === "paragraph" && !node.attrs.id) {
-          tr.setNodeMarkup(pos, undefined, {
-            ...node.attrs,
-            id: uuidv4(),
-          });
-          modified = true;
-          count++;
-        }
-      });
-
-      console.log(
-        `[ParagraphWithId] onUpdate setTimeout assigned ${count} IDs`,
-      );
-      if (modified) {
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(transactions, _oldState, newState) {
+        if (!transactions.some(tr => tr.docChanged)) return null;
+        const seen = new Set<string>();
+        const tr = newState.tr;
+        newState.doc.descendants((node, pos) => {
+          if (node.type.name !== "paragraph" && node.type.name !== "heading") return;
+          const id = node.attrs.id as string | null;
+          if (!id || seen.has(id)) {
+            const newId = uuidv4();
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, id: newId });
+            seen.add(newId);
+          } else {
+            seen.add(id);
+          }
+        });
+        if (!tr.docChanged) return null;
         tr.setMeta("addToHistory", false);
-        editor.view.dispatch(tr);
-      }
-      storage.isAssigningIds = false;
-    }, 0);
+        return tr;
+      },
+    })];
   },
 });
 

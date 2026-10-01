@@ -92,9 +92,10 @@ class TipTapConverter:
                 # Regular line break or text wrapping
                 return {"type": "hardBreak"}
 
-        # Handle tab runs - create a special tab node to preserve styling
+        # Tab runs become a "\t" text node. Marks on text survive
+        # collaborative sync; marks on inline atom nodes do not.
         if run.is_tab:
-            node = {"type": "tab"}
+            node = {"type": "text", "text": "\t"}
             marks = self._build_marks(run)
             if marks:
                 node["marks"] = marks
@@ -174,7 +175,7 @@ class TipTapConverter:
         ]
 
         # Build base attributes
-        attrs = {}
+        attrs = {"id": str(uuid.uuid4())}
         if para.style:
             attrs["styleName"] = para.style
         if para.raw_pPr:
@@ -376,7 +377,7 @@ class TipTapConverter:
             if node_type in ("paragraph", "heading"):
                 attrs = node.get("attrs", {})
                 if "rawPPr" in attrs:
-                    styles[f"para:{para_counter[0]}:pPr"] = attrs.pop("rawPPr")
+                    styles[f"para:{attrs['id']}:pPr"] = attrs.pop("rawPPr")
                 para_counter[0] += 1
 
             if node_type == "table":

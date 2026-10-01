@@ -1,13 +1,12 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 
 /**
- * Tab extension for representing Word tab characters.
+ * Legacy node for Word tab characters.
  *
- * In Word documents, tabs are represented as <w:tab/> elements.
- * They can carry styling (like dotted underlines for form fields)
- * which is preserved via the rawStyle mark.
- *
- * This is an inline node that renders as a tab character.
+ * docx2tiptap writes Word tabs (<w:tab/>) as "\t" inside text nodes, so their
+ * marks (rawStyle, insertion, deletion) survive collaborative sync, which only
+ * syncs marks on text. This node stays in the schema so documents saved with
+ * tab nodes still load and export.
  */
 export const Tab = Node.create({
   name: "tab",

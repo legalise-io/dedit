@@ -116,3 +116,11 @@ export { StyleNumbering } from "../extensions/StyleNumbering";
 
 // UI Components
 export { FindReplaceBar } from "../components/FindReplaceBar";
+
+// Headless extension list (safe in Node)
+export { createDeditExtensions } from "./extensions/createDeditExtensions";
+export type { DeditExtensionOptions } from "./extensions/createDeditExtensions";
+export { RawStylesStorage } from "../extensions/RawStylesStorage";
+
+// Apply paragraph-level AI edits as tracked changes
+export { applyEditsAsTrackChanges } from "./ai/applyEdits";

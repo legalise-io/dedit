@@ -20,6 +20,7 @@ from typing import Optional
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.text.run import Run
 
 from .utils import base64_to_element
 
@@ -154,7 +155,11 @@ class DocxExporter:
 
             # Restore paragraph/heading rawPPr (numbering overrides, etc.)
             if node_type in ("paragraph", "heading"):
-                para_key = f"para:{para_counter[0]}:pPr"
+                para_id = node.get("attrs", {}).get("id")
+                para_key = f"para:{para_id}:pPr"
+                if para_key not in raw_styles:
+                    # Read documents exported by older dedit versions.
+                    para_key = f"para:{para_counter[0]}:pPr"
                 if para_key in raw_styles:
                     if "attrs" not in node:
                         node["attrs"] = {}
@@ -418,9 +423,7 @@ class DocxExporter:
                 self._add_numbering_to_paragraph(para, num_id, num_ilvl, format_change)
             for child_node in content:
                 if child_node.get("type") == "text":
-                    run = para.add_run(child_node.get("text", ""))
-                    run.bold = True
-                    self._apply_basic_marks(run, child_node.get("marks", []))
+                    self._add_text_with_marks(para, child_node)
                 elif child_node.get("type") == "hardBreak":
                     self._add_break(para, child_node)
                 elif child_node.get("type") == "tab":
@@ -623,9 +626,7 @@ class DocxExporter:
                             if skip_first_text:
                                 skip_first_text = False
                                 continue
-                            run = cell.paragraphs[0].add_run(child_node.get("text", ""))
-                            run.bold = True
-                            self._apply_basic_marks(run, child_node.get("marks", []))
+                            self._add_text_with_marks(cell.paragraphs[0], child_node)
                         elif child_node.get("type") == "hardBreak":
                             self._add_break(cell.paragraphs[0], child_node)
                         elif child_node.get("type") == "tab":
@@ -677,24 +678,22 @@ class DocxExporter:
 
         # Handle track changes
         if insertion_mark:
-            self._add_insertion(para, text, insertion_mark, basic_marks, raw_style_mark)
+            run = self._add_insertion(para, text, insertion_mark, basic_marks, raw_style_mark)
         elif deletion_mark:
-            self._add_deletion(para, text, deletion_mark, basic_marks, raw_style_mark)
+            run = self._add_deletion(para, text, deletion_mark, basic_marks, raw_style_mark)
         else:
             # Regular text - use raw rPr if available for full style preservation
             if raw_style_mark and raw_style_mark.get("rPr"):
-                self._add_run_with_raw_rPr(para, text, raw_style_mark["rPr"])
+                run = self._add_run_with_raw_rPr(para, text, raw_style_mark["rPr"], basic_marks)
             else:
                 run = para.add_run(text)
                 self._apply_basic_marks(run, basic_marks)
 
-            # Track runs for comments
-            for comment_id in comment_ids:
-                if comment_id not in self._comment_runs_map:
-                    self._comment_runs_map[comment_id] = []
-                self._comment_runs_map[comment_id].append(run if not raw_style_mark else None)
+        # Comments can anchor plain, formatted or revision-wrapped runs.
+        for comment_id in comment_ids:
+            self._comment_runs_map.setdefault(comment_id, []).append(run)
 
-    def _add_run_with_raw_rPr(self, para, text: str, raw_rPr: str) -> None:
+    def _add_run_with_raw_rPr(self, para, text: str, raw_rPr: str, basic_marks: list) -> Run:
         """
         Add a run to a paragraph using raw rPr XML for full style preservation.
 
@@ -709,21 +708,32 @@ class DocxExporter:
         r = OxmlElement("w:r")
 
         # Restore the full rPr from base64
-        rPr = base64_to_element(raw_rPr)
+        rPr = self._updated_run_properties(raw_rPr, basic_marks)
         if rPr is not None:
             r.append(rPr)
 
-        # Add text element
-        t = OxmlElement("w:t")
-        t.text = text
-        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        r.append(t)
+        self._append_run_text(r, text)
 
         p_elem.append(r)
+        return Run(r, para)
+
+    def _updated_run_properties(self, raw_rPr: str, basic_marks: list):
+        rPr = base64_to_element(raw_rPr)
+        if rPr is None:
+            rPr = OxmlElement("w:rPr")
+        active = {mark.get("type") for mark in basic_marks}
+        for name, tag in (("bold", "w:b"), ("italic", "w:i")):
+            prop = rPr.find(qn(tag))
+            if prop is not None or name in active:
+                if prop is None:
+                    prop = OxmlElement(tag)
+                    rPr.append(prop)
+                prop.set(qn("w:val"), "1" if name in active else "0")
+        return rPr
 
     def _add_insertion(
         self, para, text: str, attrs: dict, basic_marks: list, raw_style_mark: dict = None
-    ) -> None:
+    ) -> Run:
         """
         Add text as an insertion (tracked change).
 
@@ -743,7 +753,7 @@ class DocxExporter:
 
         # Add run properties - prefer raw rPr for full style preservation
         if raw_style_mark and raw_style_mark.get("rPr"):
-            rPr = base64_to_element(raw_style_mark["rPr"])
+            rPr = self._updated_run_properties(raw_style_mark["rPr"], basic_marks)
             if rPr is not None:
                 r.append(rPr)
         elif basic_marks:
@@ -755,19 +765,15 @@ class DocxExporter:
                     rPr.append(OxmlElement("w:i"))
             r.append(rPr)
 
-        # Add text element
-        t = OxmlElement("w:t")
-        t.text = text
-        # Preserve spaces
-        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        r.append(t)
+        self._append_run_text(r, text)
 
         ins.append(r)
         p_elem.append(ins)
+        return Run(r, para)
 
     def _add_deletion(
         self, para, text: str, attrs: dict, basic_marks: list, raw_style_mark: dict = None
-    ) -> None:
+    ) -> Run:
         """
         Add text as a deletion (tracked change).
 
@@ -787,7 +793,7 @@ class DocxExporter:
 
         # Add run properties - prefer raw rPr for full style preservation
         if raw_style_mark and raw_style_mark.get("rPr"):
-            rPr = base64_to_element(raw_style_mark["rPr"])
+            rPr = self._updated_run_properties(raw_style_mark["rPr"], basic_marks)
             if rPr is not None:
                 r.append(rPr)
         elif basic_marks:
@@ -799,14 +805,31 @@ class DocxExporter:
                     rPr.append(OxmlElement("w:i"))
             r.append(rPr)
 
-        # Add deleted text element (w:delText instead of w:t)
-        del_text = OxmlElement("w:delText")
-        del_text.text = text
-        del_text.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        r.append(del_text)
+        # Deleted text uses w:delText instead of w:t
+        self._append_run_text(r, text, deleted=True)
 
         del_elem.append(r)
         p_elem.append(del_elem)
+        return Run(r, para)
+
+    def _append_run_text(self, r, text: str, deleted: bool = False) -> None:
+        """
+        Append text to a w:r element, writing each "\t" as a w:tab.
+
+        Args:
+            r: The w:r element
+            text: Text that may contain tab characters
+            deleted: Use w:delText (inside w:del) instead of w:t
+        """
+        tag = "w:delText" if deleted else "w:t"
+        for i, part in enumerate(text.split("\t")):
+            if i > 0:
+                r.append(OxmlElement("w:tab"))
+            if part:
+                t = OxmlElement(tag)
+                t.text = part
+                t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+                r.append(t)
 
     def _apply_basic_marks(self, run, marks: list) -> None:
         """Apply basic formatting marks (bold, italic) to a run."""

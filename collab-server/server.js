@@ -1,75 +1,19 @@
 import { Server } from "@hocuspocus/server";
 import { Database } from "@hocuspocus/extension-database";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createPersistence } from "./persistence.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const filename = fileURLToPath(import.meta.url);
+const defaultDataDir = join(dirname(filename), "data");
 
-// Create data directory for persistence
-const dataDir = join(__dirname, "data");
-if (!existsSync(dataDir)) {
-  mkdirSync(dataDir, { recursive: true });
+/** Construct the server without starting its listener. */
+export function createCollabServer({ port = 1234, dataDir = defaultDataDir, quiet = false } = {}) {
+  return new Server({ port, quiet, extensions: [new Database(createPersistence(dataDir))] });
 }
 
-/**
- * Simple file-based persistence for development.
- * In production, you'd use SQLite, Postgres, Redis, etc.
- */
-const getDocPath = (documentName) => {
-  // Sanitize document name for filesystem
-  const safeName = documentName.replace(/[^a-zA-Z0-9-_]/g, "_");
-  return join(dataDir, `${safeName}.yjs`);
-};
-
-const server = new Server({
-  port: 1234,
-
-  // Log connections for debugging
-  async onConnect(data) {
-    console.log(`[Hocuspocus] Client connected to document: ${data.documentName}`);
-  },
-
-  async onDisconnect(data) {
-    console.log(`[Hocuspocus] Client disconnected from document: ${data.documentName}`);
-  },
-
-  // Extensions for persistence
-  extensions: [
-    new Database({
-      // Load document from file
-      fetch: async ({ documentName }) => {
-        const path = getDocPath(documentName);
-        if (existsSync(path)) {
-          console.log(`[Hocuspocus] Loading document: ${documentName}`);
-          return readFileSync(path);
-        }
-        console.log(`[Hocuspocus] New document: ${documentName}`);
-        return null;
-      },
-
-      // Save document to file
-      store: async ({ documentName, state }) => {
-        const path = getDocPath(documentName);
-        console.log(`[Hocuspocus] Saving document: ${documentName}`);
-        writeFileSync(path, state);
-      },
-    }),
-  ],
-});
-
-console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║                                                           ║
-║   Hocuspocus Collaboration Server                         ║
-║                                                           ║
-║   WebSocket URL: ws://localhost:1234                      ║
-║   Data directory: ${dataDir}
-║                                                           ║
-║   Ready for collaborative editing!                        ║
-║                                                           ║
-╚═══════════════════════════════════════════════════════════╝
-`);
-
-server.listen();
+if (process.argv[1] && resolve(process.argv[1]) === filename) {
+  const server = createCollabServer();
+  console.log(`Hocuspocus collaboration server: ws://localhost:1234\nData directory: ${defaultDataDir}`);
+  server.listen();
+}

@@ -1,6 +1,5 @@
 import type { Transaction, EditorState } from "@tiptap/pm/state";
-import type { Slice } from "@tiptap/pm/model";
-import { ReplaceStep } from "@tiptap/pm/transform";
+import { ReplaceStep, Mapping } from "@tiptap/pm/transform";
 import type { PendingChange, DeletedFragment } from "./types";
 
 /**
@@ -8,8 +7,8 @@ import type { PendingChange, DeletedFragment } from "./types";
  */
 export function collectChangesFromTransactions(
   transactions: readonly Transaction[],
-  oldState: EditorState,
-  newState: EditorState,
+  _oldState: EditorState,
+  _newState: EditorState,
   author: string,
 ): PendingChange[] {
   const pendingChanges: PendingChange[] = [];
@@ -18,8 +17,6 @@ export function collectChangesFromTransactions(
     if (!transaction.docChanged) continue;
     collectChangesFromTransaction(
       transaction,
-      oldState,
-      newState,
       author,
       pendingChanges,
     );
@@ -33,8 +30,6 @@ export function collectChangesFromTransactions(
  */
 function collectChangesFromTransaction(
   transaction: Transaction,
-  oldState: EditorState,
-  newState: EditorState,
   author: string,
   pendingChanges: PendingChange[],
 ): void {
@@ -46,20 +41,12 @@ function collectChangesFromTransaction(
       const { from, to } = replaceStep;
       const slice = replaceStep.slice;
 
-      // Map positions back through previous steps to get oldState positions
-      const { oldFrom, oldTo } = mapPositionsToOldState(
-        from,
-        to,
-        stepIndex,
-        transaction,
-      );
-
-      // Collect deleted and already-deleted fragments
+      // Inspect the document before this step, not the transaction's initial doc.
+      // The inverse mapping distinguishes original characters from text inserted
+      // earlier in the same transaction (which should disappear when deleted).
+      const originMapping = new Mapping(transaction.mapping.maps.slice(0, stepIndex)).invert();
       const { deletedFragments, alreadyDeletedFragments } =
-        collectDeletedFragments(oldState, oldFrom, oldTo, author);
-
-      // Get inserted text from the slice
-      const insertedText = extractInsertedText(slice);
+        collectDeletedFragments({ doc: transaction.docs[stepIndex] }, from, to, author, originMapping);
 
       // Map 'from' position forward through subsequent steps to get newState position
       const mappedFrom = mapPositionToNewState(
@@ -78,38 +65,20 @@ function collectChangesFromTransaction(
         pendingChanges,
       );
 
-      // Add insertion change if there's inserted text
-      addInsertionChange(
-        insertedText,
-        mappedFrom,
-        newState,
-        pendingChanges,
-      );
+      // Slice positions include block boundaries; text length alone loses them.
+      slice.content.descendants((node, offset) => {
+        if (!node.isText || !node.text) return;
+        const from = replaceStep.from + offset - slice.openStart;
+        const later = transaction.mapping.slice(stepIndex + 1);
+        const mappedStart = later.map(from, 1);
+        const mappedEnd = later.map(from + node.nodeSize, -1);
+        if (mappedEnd > mappedStart) {
+          pendingChanges.push({ type: "insertion", from: mappedStart, to: mappedEnd, text: node.text });
+        }
+      });
     }
     stepIndex++;
   }
-}
-
-/**
- * Map positions back through previous steps to get oldState positions.
- */
-function mapPositionsToOldState(
-  from: number,
-  to: number,
-  stepIndex: number,
-  transaction: Transaction,
-): { oldFrom: number; oldTo: number } {
-  let oldFrom = from;
-  let oldTo = to;
-
-  for (let i = 0; i < stepIndex; i++) {
-    const prevStep = transaction.steps[i];
-    const map = prevStep.getMap();
-    oldFrom = map.invert().map(oldFrom, -1);
-    oldTo = map.invert().map(oldTo, 1);
-  }
-
-  return { oldFrom, oldTo };
 }
 
 /**
@@ -135,10 +104,11 @@ function mapPositionToNewState(
  * Collect deleted text fragments from the old state, preserving marks.
  */
 function collectDeletedFragments(
-  oldState: EditorState,
+  oldState: Pick<EditorState, "doc">,
   oldFrom: number,
   oldTo: number,
   author: string,
+  originMapping: Mapping,
 ): {
   deletedFragments: DeletedFragment[];
   alreadyDeletedFragments: DeletedFragment[];
@@ -159,21 +129,26 @@ function collectDeletedFragments(
       }
 
       if (node.isText && node.text) {
-        const fragment = processTextNode(
-          node,
-          pos,
-          oldFrom,
-          oldTo,
-          author,
-        );
-
-        if (fragment) {
-          if (fragment.type === "deleted") {
-            deletedFragments.push(fragment.fragment);
-          } else if (fragment.type === "already-deleted") {
-            alreadyDeletedFragments.push(fragment.fragment);
+        const start = Math.max(pos, oldFrom);
+        const end = Math.min(pos + node.nodeSize, oldTo);
+        let originalStart: number | null = null;
+        const flush = (until: number) => {
+          if (originalStart === null) return;
+          const fragment = processTextNode(node, pos, originalStart, until, author);
+          if (fragment?.type === "deleted") deletedFragments.push(fragment.fragment);
+          if (fragment?.type === "already-deleted") alreadyDeletedFragments.push(fragment.fragment);
+          originalStart = null;
+        };
+        for (let offset = start; offset < end; offset++) {
+          const originalFrom = originMapping.map(offset, 1);
+          const originalTo = originMapping.map(offset + 1, -1);
+          if (originalTo > originalFrom) {
+            originalStart ??= offset;
+          } else {
+            flush(offset);
           }
         }
+        flush(end);
       }
     });
   } catch {
@@ -240,27 +215,6 @@ function processTextNode(
 }
 
 /**
- * Extract inserted text from a slice.
- */
-function extractInsertedText(slice: Slice): string {
-  let insertedText = "";
-
-  slice.content.forEach((node) => {
-    if (node.isText) {
-      insertedText += node.text || "";
-    } else if (node.isBlock) {
-      node.content.forEach((child) => {
-        if (child.isText) {
-          insertedText += child.text || "";
-        }
-      });
-    }
-  });
-
-  return insertedText;
-}
-
-/**
  * Add a deletion change if there are fragments to delete.
  */
 function addDeletionChange(
@@ -299,27 +253,4 @@ function addRestoreDeletedChanges(
       originalMarks: fragment.marks,
     });
   }
-}
-
-/**
- * Add an insertion change for inserted text.
- * Always add an insertion change to ensure the correct author is attributed,
- * even if the text already has an insertion mark from another author.
- */
-function addInsertionChange(
-  insertedText: string,
-  mappedFrom: number,
-  _newState: EditorState,
-  pendingChanges: PendingChange[],
-): void {
-  if (!insertedText || insertedText.length === 0) return;
-
-  // Always add insertion change - applyInsertion will handle removing
-  // any existing insertion marks and adding the new one with correct author
-  pendingChanges.push({
-    type: "insertion",
-    from: mappedFrom,
-    to: mappedFrom + insertedText.length,
-    text: insertedText,
-  });
 }

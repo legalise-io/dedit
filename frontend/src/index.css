@@ -2412,7 +2412,12 @@ del.selected-change,
     border-radius: 2px;
 }
 
-/* Tab character - renders as a fixed-width space */
+/* Tab characters ("\t" in text, from Word <w:tab/>) */
+.tiptap {
+    tab-size: 4;
+}
+
+/* Legacy tab node - renders as a fixed-width space */
 .tiptap .word-tab {
     display: inline-block;
     min-width: 2em;

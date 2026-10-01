@@ -108,7 +108,7 @@ export function useChangeNavigation({
         // Scroll the change into view within the container
         setTimeout(() => {
           const container = containerRef.current;
-          if (!container) return;
+          if (!container || editor.isDestroyed || change.from > editor.state.doc.content.size) return;
 
           // Find the DOM element for this change
           const view = editor.view;

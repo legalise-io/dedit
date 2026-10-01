@@ -188,7 +188,7 @@ export function applyParagraphEdit(
       ed.chain()
         .focus()
         .setTextSelection({ from: docStart, to: docEnd })
-        .insertContent(change.insertText)
+        .insertContent({ type: "text", text: change.insertText })
         .run();
     } else if (change.deleteText) {
       // Pure deletion: select and delete
@@ -202,7 +202,7 @@ export function applyParagraphEdit(
       ed.chain()
         .focus()
         .setTextSelection(docStart)
-        .insertContent(change.insertText)
+        .insertContent({ type: "text", text: change.insertText })
         .run();
     }
   }
@@ -266,7 +266,7 @@ export function acceptAllChangesInParagraph(
 
   // Find all track changes in this paragraph and accept them
   // We need to find the paragraph element first
-  const paragraphEl = editorDom.querySelector(`[data-id="${paragraphId}"]`);
+  const paragraphEl = editorDom.querySelector(`[data-paragraph-id="${paragraphId}"], [data-block-id="${paragraphId}"]`);
   if (!paragraphEl) return;
 
   // Accept all deletions in this paragraph

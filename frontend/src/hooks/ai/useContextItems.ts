@@ -34,7 +34,11 @@ export function useContextItems(
   const addContextItems = useCallback((items: ContextItem[]) => {
     setContextItems((prev) => {
       const existingIds = new Set(prev.map((i) => i.id));
-      const newItems = items.filter((item) => !existingIds.has(item.id));
+      const newItems = items.filter((item) => {
+        if (existingIds.has(item.id)) return false;
+        existingIds.add(item.id);
+        return true;
+      });
       return [...prev, ...newItems];
     });
   }, []);

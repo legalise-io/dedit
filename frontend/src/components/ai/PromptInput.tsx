@@ -210,7 +210,7 @@ export function PromptInput({
       const text = getEditorText();
 
       // Handle backspace on empty input to remove command pill
-      if (e.key === "Backspace" && text === "" && activeCommand) {
+      if (e.key === "Backspace" && text.trim() === "" && activeCommand) {
         e.preventDefault();
         removeCommand();
         return;

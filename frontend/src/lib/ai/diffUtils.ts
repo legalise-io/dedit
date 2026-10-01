@@ -1,4 +1,4 @@
-import { diffWords } from "diff";
+import { diffWordsWithSpace } from "diff";
 import type { DiffChange, GroupedTrackChange, PendingTrackChange } from "./types";
 
 /**
@@ -6,7 +6,7 @@ import type { DiffChange, GroupedTrackChange, PendingTrackChange } from "./types
  * Returns array of changes with positions relative to the old string.
  */
 export function computeDiff(oldStr: string, newStr: string): DiffChange[] {
-  const wordDiff = diffWords(oldStr, newStr);
+  const wordDiff = diffWordsWithSpace(oldStr, newStr);
   const changes: DiffChange[] = [];
 
   let oldPos = 0;

@@ -332,7 +332,10 @@ export function findParagraphById(
 
   doc.descendants((node, pos) => {
     if (result) return false; // Already found
-    if (node.type.name === "paragraph" && node.attrs.id === paragraphId) {
+    if (
+      (node.type.name === "paragraph" || node.type.name === "heading") &&
+      node.attrs.id === paragraphId
+    ) {
       result = {
         id: paragraphId,
         // Use clean text (excluding deletions) to match what AI sees
@@ -368,7 +371,10 @@ export function findParagraphWithPositionMap(
 
   doc.descendants((node, pos) => {
     if (result) return false;
-    if (node.type.name === "paragraph" && node.attrs.id === paragraphId) {
+    if (
+      (node.type.name === "paragraph" || node.type.name === "heading") &&
+      node.attrs.id === paragraphId
+    ) {
       const paragraphStart = pos + 1;
       const positionMap = buildParagraphPositionMap(node, paragraphStart);
 

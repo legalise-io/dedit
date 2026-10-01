@@ -41,9 +41,17 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
         ]
     """
     segments = []
+    active_comment_ids = set()
 
     def process_element(element, current_revision=None):
         tag = element.tag
+
+        if tag == qn("w:commentRangeStart"):
+            active_comment_ids.add(element.get(qn("w:id")))
+            return
+        if tag == qn("w:commentRangeEnd"):
+            active_comment_ids.discard(element.get(qn("w:id")))
+            return
 
         # Check if this element starts a revision
         if tag == qn("w:ins"):
@@ -80,6 +88,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                     {
                         "text": text,
                         "revision": current_revision,
+                        "comment_ids": sorted(active_comment_ids),
                         "bold": False,
                         "italic": False,
                     }
@@ -94,6 +103,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                     {
                         "text": text,
                         "revision": current_revision,
+                        "comment_ids": sorted(active_comment_ids),
                         "bold": False,
                         "italic": False,
                     }
@@ -108,8 +118,10 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
             is_italic = False
             raw_rPr = None
             if rPr is not None:
-                is_bold = rPr.find(qn("w:b")) is not None
-                is_italic = rPr.find(qn("w:i")) is not None
+                bold = rPr.find(qn("w:b"))
+                italic = rPr.find(qn("w:i"))
+                is_bold = bold is not None and bold.get(qn("w:val"), "1") not in ("0", "false", "off")
+                is_italic = italic is not None and italic.get(qn("w:val"), "1") not in ("0", "false", "off")
                 # Store full rPr as base64 for round-trip preservation
                 raw_rPr = element_to_base64(rPr)
 
@@ -121,6 +133,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                             {
                                 "text": text,
                                 "revision": current_revision,
+                                "comment_ids": sorted(active_comment_ids),
                                 "bold": is_bold,
                                 "italic": is_italic,
                                 "raw_rPr": raw_rPr,
@@ -133,6 +146,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                             {
                                 "text": text,
                                 "revision": current_revision,
+                                "comment_ids": sorted(active_comment_ids),
                                 "bold": is_bold,
                                 "italic": is_italic,
                                 "raw_rPr": raw_rPr,
@@ -146,6 +160,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                             "break": True,
                             "break_type": br_type,  # "page", "column", "textWrapping", or None (line break)
                             "revision": current_revision,
+                            "comment_ids": sorted(active_comment_ids),
                         }
                     )
                 elif child.tag == qn("w:tab"):
@@ -155,6 +170,7 @@ def get_text_with_revisions(para_element, para_index: int) -> list[dict]:
                         {
                             "tab": True,
                             "revision": current_revision,
+                            "comment_ids": sorted(active_comment_ids),
                             "bold": is_bold,
                             "italic": is_italic,
                             "raw_rPr": raw_rPr,
@@ -211,7 +227,8 @@ def merge_adjacent_segments(segments: list[dict]) -> list[dict]:
         # Also check raw_rPr - segments with different raw styles should not merge
         same_raw_style = current.get("raw_rPr") == seg.get("raw_rPr")
 
-        if same_revision and same_format and same_raw_style:
+        same_comments = current.get("comment_ids", []) == seg.get("comment_ids", [])
+        if same_revision and same_format and same_raw_style and same_comments:
             current["text"] += seg["text"]
         else:
             if current.get("text"):

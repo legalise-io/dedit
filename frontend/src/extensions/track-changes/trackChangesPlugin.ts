@@ -1,3 +1,4 @@
+import { isChangeOrigin } from "@tiptap/extension-collaboration";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { TrackChangesModeStorage } from "./types";
 import { collectChangesFromTransactions } from "./collectChanges";
@@ -46,6 +47,9 @@ export function createTrackChangesPlugin(
       ) {
         return null;
       }
+
+      // Remote updates and Yjs undo already contain the originating revisions.
+      if (transactions.some(isChangeOrigin)) return null;
 
       const author = getStorage().author;
 

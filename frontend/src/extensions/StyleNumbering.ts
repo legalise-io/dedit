@@ -451,6 +451,8 @@ export const StyleNumbering = Extension.create<StyleNumberingOptions>({
         const currentLevel = nodeAttrs.numIlvl || 0;
         const currentStyle = nodeAttrs.styleName || null;
         const numId = nodeAttrs.numId;
+        // Word supports levels 0 through 8. Consume Tab at the limit.
+        if (currentLevel >= 8) return true;
         const newLevel = currentLevel + 1;
 
         // Look up the correct style for the new level

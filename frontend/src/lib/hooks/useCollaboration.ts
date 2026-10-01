@@ -118,6 +118,8 @@ export function useCollaboration(
   const [connectedUsers, setConnectedUsers] = useState<CollaborationUser[]>([]);
   const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const [isSynced, setIsSynced] = useState(false);
+  const [seededDocument, setSeededDocument] = useState<Y.Doc | null>(null);
+  const destroyTimers = useRef(new Map<Y.Doc, ReturnType<typeof setTimeout>>());
 
   // Store initial content in a ref so we can access it in the onSynced callback
   const initialContentRef = useRef(initialContent);
@@ -132,6 +134,12 @@ export function useCollaboration(
 
   // Create provider in useEffect to handle cleanup properly (especially in StrictMode)
   useEffect(() => {
+    // StrictMode immediately replays effects. Cancel disposal when reusing this doc.
+    const pendingDestroy = destroyTimers.current.get(ydoc);
+    if (pendingDestroy) {
+      clearTimeout(pendingDestroy);
+      destroyTimers.current.delete(ydoc);
+    }
     const newProvider = new HocuspocusProvider({
       url: serverUrl,
       name: documentName,
@@ -169,11 +177,16 @@ export function useCollaboration(
       newProvider.destroy();
       setProvider(null);
       setIsSynced(false);
+      const timer = setTimeout(() => {
+        ydoc.destroy();
+        destroyTimers.current.delete(ydoc);
+      }, 0);
+      destroyTimers.current.set(ydoc, timer);
     };
   }, [serverUrl, documentName, ydoc, token]);
 
   // Track if we've already seeded the document
-  const [hasSeeded, setHasSeeded] = useState(false);
+  const hasSeeded = seededDocument === ydoc;
 
   // Determine if document needs seeding (empty after sync and we have initial content)
   const needsSeeding = useMemo(() => {
@@ -204,8 +217,8 @@ export function useCollaboration(
   }, [isSynced, hasSeeded, ydoc]);
 
   const markSeeded = useCallback(() => {
-    setHasSeeded(true);
-  }, []);
+    setSeededDocument(ydoc);
+  }, [ydoc]);
 
   // Update user awareness when user changes
   useEffect(() => {

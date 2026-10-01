@@ -110,7 +110,7 @@ async def get_document(doc_id: str):
     if doc_id not in documents:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    return documents[doc_id]
+    return {key: value for key, value in documents[doc_id].items() if key != "original_bytes"}
 
 
 @app.get("/documents")

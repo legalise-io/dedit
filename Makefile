@@ -10,6 +10,10 @@ VENV := $(BACKEND_DIR)/.venv
 help:
 	@echo "Document Editor PoC - Available commands:"
 	@echo ""
+	@echo "  make test-install     Install test dependencies (uv, Node >=22 required)"
+	@echo "  make test             Run all component tests"
+	@echo "  make test-coverage    Enforce production coverage >=70%"
+	@echo "  make check            Check product and test TypeScript"
 	@echo "  make install          Install all dependencies (backend + frontend)"
 	@echo "  make dev              Start both servers (auto-kills processes on ports)"
 	@echo "  make dev-backend      Start only the backend server (port 8000)"
@@ -138,3 +142,39 @@ publish: build-lib
 	@echo "Publishing to npm..."
 	cd $(FRONTEND_DIR) && npm publish
 	@echo "Published version $$(cd $(FRONTEND_DIR) && node -p "require('./package.json').version")"
+
+# Automated test suite
+.PHONY: test-install test test-python test-frontend test-collab test-coverage check build
+TEST_VENV := .venv-test
+PY := $(TEST_VENV)/bin/python
+
+test-install:
+	uv venv --python 3.11 $(TEST_VENV)
+	uv pip install --python $(PY) -r requirements-test.txt
+	npm --prefix frontend ci
+	npm --prefix collab-server ci
+
+test: test-python test-frontend test-collab
+
+test-python:
+	$(PY) -m pytest -q
+
+test-frontend:
+	npm --prefix frontend test
+
+test-collab:
+	npm --prefix collab-server test
+
+test-coverage:
+	$(PY) -m pytest --cov=docx2tiptap --cov=backend.main --cov-report=json --cov-report=term -q
+	$(PY) scripts/check_python_coverage.py
+	npm --prefix frontend run test:coverage
+	npm --prefix collab-server run test:coverage
+
+check:
+	npm --prefix frontend run typecheck
+	npm --prefix frontend run typecheck:tests
+
+.PHONY: check-package
+check-package:
+	node scripts/check_frontend_package.mjs

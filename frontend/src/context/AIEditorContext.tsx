@@ -6,6 +6,7 @@ import {
   useRef,
   ReactNode,
   useMemo,
+  useEffect,
 } from "react";
 import { Editor } from "@tiptap/react";
 
@@ -224,17 +225,21 @@ export function AIEditorProvider({
     });
   }, []);
 
-  const setEditor = useCallback(
-    (newEditor: Editor | null) => {
-      setEditorState(newEditor);
-      if (newEditor) {
-        updateSelectionContext();
-        newEditor.on("selectionUpdate", updateSelectionContext);
-        newEditor.on("transaction", updateSelectionContext);
-      }
-    },
-    [updateSelectionContext],
-  );
+  const setEditor = useCallback((newEditor: Editor | null) => {
+    editorRef.current = newEditor;
+    setEditorState(newEditor);
+    updateSelectionContext();
+  }, [updateSelectionContext]);
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.on("selectionUpdate", updateSelectionContext);
+    editor.on("transaction", updateSelectionContext);
+    return () => {
+      editor.off("selectionUpdate", updateSelectionContext);
+      editor.off("transaction", updateSelectionContext);
+    };
+  }, [editor, updateSelectionContext]);
 
   // ========== Context Items Hook ==========
   const contextItemsHook = useContextItems({

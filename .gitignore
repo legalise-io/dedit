@@ -43,3 +43,10 @@ frontend/dist/
 
 
 .claude
+
+# Automated test environments and reports
+.venv-test/
+.coverage
+coverage.json
+coverage/
+.pytest_cache/

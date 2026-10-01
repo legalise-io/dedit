@@ -5,6 +5,7 @@ Contains common helpers used across multiple modules.
 """
 
 import base64
+import binascii
 from typing import Optional
 
 from lxml import etree
@@ -38,5 +39,8 @@ def base64_to_element(b64_string: str):
     """
     if not b64_string:
         return None
-    xml_bytes = base64.b64decode(b64_string.encode("ascii"))
-    return etree.fromstring(xml_bytes)
+    try:
+        xml_bytes = base64.b64decode(b64_string.encode("ascii"), validate=True)
+        return etree.fromstring(xml_bytes, parser=etree.XMLParser(resolve_entities=False, no_network=True))
+    except (binascii.Error, UnicodeError, etree.XMLSyntaxError):
+        return None

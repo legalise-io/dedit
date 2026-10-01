@@ -1,29 +1,6 @@
 import { useEditor } from "@tiptap/react";
-import { useMemo, useCallback } from "react";
-import Document from "@tiptap/extension-document";
-import Text from "@tiptap/extension-text";
-import Bold from "@tiptap/extension-bold";
-import Italic from "@tiptap/extension-italic";
-import TableRow from "@tiptap/extension-table-row";
-import TableCell from "@tiptap/extension-table-cell";
-import TableHeader from "@tiptap/extension-table-header";
-import History from "@tiptap/extension-history";
-
-import Section from "../../extensions/Section";
-import TableWithId from "../../extensions/TableWithId";
-import { ParagraphWithId } from "../../extensions/ParagraphWithId";
-import { HeadingWithStyle } from "../../extensions/HeadingWithStyle";
-import { HardBreakWithType } from "../../extensions/HardBreakWithType";
-import { PersistentSelection } from "../../extensions/PersistentSelection";
-import { Insertion } from "../../extensions/Insertion";
-import { Deletion } from "../../extensions/Deletion";
-import { Comment } from "../../extensions/Comment";
-import { RawStyle } from "../../extensions/RawStyle";
-import { TrackChangesMode } from "../../extensions/TrackChangesMode";
-import { SearchAndReplace } from "../../extensions/SearchAndReplace";
-import { RawStylesStorage } from "../../extensions/RawStylesStorage";
-import { StyleNumbering } from "../../extensions/StyleNumbering";
-import { Tab } from "../../extensions/Tab";
+import { useMemo, useCallback, useEffect } from "react";
+import { createDeditExtensions } from "../extensions/createDeditExtensions";
 
 import type { TipTapDocument, UseDocumentEditorOptions } from "../types";
 
@@ -76,51 +53,13 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
       return replaceExtensions;
     }
 
-    const headingLevels = extensionConfig.heading?.levels || [1, 2, 3, 4, 5, 6];
-    const tableResizable = extensionConfig.table?.resizable ?? false;
-
-    const baseExtensions = [
-      Document,
-      ParagraphWithId,
-      Text,
-      HeadingWithStyle.configure({
-        levels: headingLevels,
-      }),
-      Bold,
-      Italic,
-      HardBreakWithType,
-      Tab,
-      Section,
-      TableWithId.configure({
-        resizable: tableResizable,
-      }),
-      TableRow,
-      TableCell,
-      TableHeader,
-      Insertion,
-      Deletion,
-      Comment,
-      RawStyle,
-      TrackChangesMode.configure({
-        enabled: trackChangesEnabled,
-        author: trackChangesAuthor,
-      }),
-      SearchAndReplace.configure({
-        searchResultClass: "search-result",
-      }),
-      PersistentSelection,
-      RawStylesStorage,
-      StyleNumbering,
-    ];
-
-    // Only include History if not using collaboration (Yjs has its own undo manager)
-    if (!hasCollaboration) {
-      baseExtensions.push(
-        History.configure({
-          depth: 100,
-        }),
-      );
-    }
+    const baseExtensions = createDeditExtensions({
+      collaboration: hasCollaboration,
+      headingLevels: extensionConfig.heading?.levels,
+      tableResizable: extensionConfig.table?.resizable,
+      trackChangesEnabled,
+      trackChangesAuthor,
+    });
 
     return [...baseExtensions, ...additionalExtensions];
   }, [
@@ -132,6 +71,7 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
     hasCollaboration,
   ]);
 
+  const contentKey = JSON.stringify(initialContent);
   const editor = useEditor(
     {
       extensions,
@@ -144,8 +84,12 @@ export function useDocumentEditor(options: UseDocumentEditorOptions = {}) {
         }
       },
     },
-    [initialContent, hasCollaboration],
+    [contentKey, hasCollaboration],
   );
+
+  useEffect(() => {
+    editor?.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   const isReady = editor !== null;
 

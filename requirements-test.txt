@@ -1,0 +1,7 @@
+-e ./docx2tiptap
+python-docx>=1.2.0,<2
+fastapi>=0.104,<1
+python-multipart>=0.0.6
+httpx>=0.25,<1
+pytest>=8,<10
+pytest-cov>=5,<8

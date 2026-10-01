@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "docx2tiptap"
-version = "0.2.1"
+version = "0.2.2"
 description = "Parse DOCX files and convert to TipTap JSON format"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "python-docx>=1.1.0",
+    "python-docx>=1.2.0",
 ]
 
 [project.urls]

@@ -49,14 +49,6 @@ def parse_paragraph(
     revision_segments = get_text_with_revisions(para._element, para_index)
     revision_segments = merge_adjacent_segments(revision_segments)
 
-    comment_segments = get_text_with_comments(para._element, para_index)
-
-    # Build a map of text positions to comment IDs
-    comment_map = {}  # text -> [comment_ids]
-    for seg in comment_segments:
-        if seg["comments"]:
-            comment_map[seg["text"]] = seg["comments"]
-
     # Convert segments to TextRuns
     runs = []
     for seg in revision_segments:
@@ -80,11 +72,12 @@ def parse_paragraph(
                     italic=seg.get("italic", False),
                     revision=seg.get("revision"),
                     raw_rPr=seg.get("raw_rPr"),
+                    comment_ids=seg.get("comment_ids", []),
                 )
             )
         elif seg.get("text"):
             # Try to find matching comment info
-            comment_ids = comment_map.get(seg["text"], [])
+            comment_ids = seg.get("comment_ids", [])
 
             runs.append(
                 TextRun(
@@ -556,8 +549,7 @@ def parse_docx(file_content: bytes) -> tuple[list, dict, dict]:
             if element in para_map:
                 p = para_map[element]
                 parsed = parse_paragraph(p, numbering_tracker, para_index)
-                if parsed.runs or parsed.numbering:
-                    elements.append(parsed)
+                elements.append(parsed)
                 para_index += 1
         elif element.tag == qn("w:tbl"):
             # It's a table

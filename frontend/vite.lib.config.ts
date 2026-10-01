@@ -2,7 +2,18 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import dts from "vite-plugin-dts";
 import { resolve } from "path";
-import { copyFileSync } from "fs";
+import { copyFileSync, readFileSync } from "fs";
+
+// Every dependency stays external so the host app provides one shared copy.
+// A bundled second copy of yjs or prosemirror breaks collaboration and
+// instanceof checks.
+const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf8"));
+const externalPackages = [
+  ...Object.keys(pkg.dependencies ?? {}),
+  ...Object.keys(pkg.peerDependencies ?? {}),
+];
+const isExternal = (id: string) =>
+  externalPackages.some((name) => id === name || id.startsWith(`${name}/`));
 
 export default defineConfig({
   plugins: [
@@ -14,6 +25,7 @@ export default defineConfig({
         "src/components/ai/**/*",
         "src/context/**/*",
       ],
+      exclude: ["src/**/*.test.ts", "src/**/*.test.tsx"],
       outDir: "dist",
       rollupTypes: true,
     }),
@@ -37,29 +49,9 @@ export default defineConfig({
       fileName: (format) => `index.${format === "es" ? "js" : "cjs"}`,
     },
     rollupOptions: {
-      external: [
-        "react",
-        "react-dom",
-        "react/jsx-runtime",
-        "@tiptap/react",
-        "@tiptap/core",
-        "@tiptap/pm",
-        "@tiptap/pm/state",
-        "@tiptap/pm/transform",
-        "@tiptap/pm/view",
-        "@tiptap/pm/model",
-        "@tiptap/extension-document",
-        "@tiptap/extension-paragraph",
-        "@tiptap/extension-text",
-        "@tiptap/extension-heading",
-        "@tiptap/extension-bold",
-        "@tiptap/extension-italic",
-        "@tiptap/extension-table",
-        "@tiptap/extension-table-row",
-        "@tiptap/extension-table-cell",
-        "@tiptap/extension-table-header",
-      ],
+      external: isExternal,
       output: {
+        interop: "auto",
         globals: {
           react: "React",
           "react-dom": "ReactDOM",

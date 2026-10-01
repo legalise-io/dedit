@@ -1,0 +1,6 @@
+[run]
+branch = True
+omit = */tests/*, */conftest.py
+[report]
+fail_under = 70
+show_missing = True
